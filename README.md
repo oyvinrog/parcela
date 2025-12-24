@@ -22,6 +22,48 @@ Run the desktop app:
 cargo tauri dev
 ```
 
+## Release builds (Windows, macOS, Linux)
+
+Tauri bundles are OS-specific, so you must build on each platform. This repo includes a GitHub Actions workflow that does it for you and attaches installers to a GitHub Release.
+
+Release steps:
+
+1) Commit and push your changes.
+2) Create a version tag (example):
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+3) The GitHub Actions workflow builds the GUI for Windows/macOS/Linux and creates a draft release with installers attached.
+4) Open the draft release on GitHub and publish it.
+
+Manual local build:
+
+```bash
+cargo tauri build
+```
+
+Output artifacts are under `src-tauri/target/release/bundle/`.
+
+## Release checklist (first time)
+
+- Run `cargo test`
+- Run `cargo tauri dev`
+- Update version in `src-tauri/tauri.conf.json`
+- Commit and push
+- Tag and push: `git tag v0.1.0 && git push origin v0.1.0`
+- Confirm GitHub Actions workflow completes
+- Download and test the Windows installer
+- Publish the GitHub Release
+
+## Code signing notes
+
+- Windows: unsigned installers may trigger SmartScreen. For production, sign with an Authenticode certificate (EV recommended).
+- macOS: notarization is required for smooth installs; you will need an Apple Developer ID certificate and `notarytool`.
+- Linux: signing is uncommon; provide checksums (SHA-256) on the release page instead.
+
 ## Usage
 
 Split a file into shares:

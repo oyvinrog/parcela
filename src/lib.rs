@@ -286,4 +286,90 @@ mod tests {
         let decoded = decode_share(&encoded).unwrap();
         assert_eq!(decoded, share);
     }
+
+    #[test]
+    fn decrypt_rejects_bad_magic() {
+        let mut blob = Vec::new();
+        blob.extend_from_slice(b"BADMAGIC");
+        blob.extend_from_slice(&[0u8; 12]);
+        blob.extend_from_slice(&[1u8, 2, 3]);
+        let err = decrypt(&blob, "pass").unwrap_err();
+        assert!(matches!(err, ParcelaError::InvalidFormat("bad magic")));
+    }
+
+    #[test]
+    fn decrypt_rejects_too_small() {
+        let blob = vec![0u8; 8 + 11];
+        let err = decrypt(&blob, "pass").unwrap_err();
+        assert!(matches!(err, ParcelaError::InvalidFormat("blob too small")));
+    }
+
+    #[test]
+    fn combine_rejects_too_few_shares() {
+        let share = Share {
+            index: 1,
+            payload: vec![0u8; 3],
+        };
+        let err = combine_shares(&[share]).unwrap_err();
+        assert!(matches!(
+            err,
+            ParcelaError::InvalidShare("need at least two shares")
+        ));
+    }
+
+    #[test]
+    fn combine_rejects_length_mismatch() {
+        let s1 = Share {
+            index: 1,
+            payload: vec![1, 2, 3],
+        };
+        let s2 = Share {
+            index: 2,
+            payload: vec![4, 5],
+        };
+        let err = combine_shares(&[s1, s2]).unwrap_err();
+        assert!(matches!(
+            err,
+            ParcelaError::InvalidShare("share length mismatch")
+        ));
+    }
+
+    #[test]
+    fn decode_share_rejects_bad_magic() {
+        let mut data = encode_share(&Share {
+            index: 1,
+            payload: vec![1, 2, 3],
+        });
+        data[..8].copy_from_slice(b"BADMAGIC");
+        let err = decode_share(&data).unwrap_err();
+        assert!(matches!(err, ParcelaError::InvalidFormat("bad share magic")));
+    }
+
+    #[test]
+    fn decode_share_rejects_truncated_payload() {
+        let mut data = encode_share(&Share {
+            index: 1,
+            payload: vec![1, 2, 3, 4],
+        });
+        data.truncate(data.len() - 2);
+        let err = decode_share(&data).unwrap_err();
+        assert!(matches!(
+            err,
+            ParcelaError::InvalidFormat("truncated share")
+        ));
+    }
+
+    #[test]
+    fn decode_share_rejects_unsupported_scheme() {
+        let mut data = encode_share(&Share {
+            index: 1,
+            payload: vec![1, 2, 3],
+        });
+        data[9] = 4;
+        let err = decode_share(&data).unwrap_err();
+        assert!(matches!(
+            err,
+            ParcelaError::InvalidShare("unsupported scheme")
+        ));
+    }
 }
