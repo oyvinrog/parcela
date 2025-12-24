@@ -1,0 +1,255 @@
+:root {
+  --ink: #101317;
+  --muted: #5f6b75;
+  --sea: #3ca6a6;
+  --moss: #6bbf7a;
+  --ember: #f28f3b;
+  --rose: #f05d5e;
+  --ice: #f6f1e9;
+  --shadow: rgba(16, 19, 23, 0.18);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Space Grotesk", "Fira Sans", "Trebuchet MS", sans-serif;
+  color: var(--ink);
+  background: radial-gradient(circle at top, #fff8eb 0%, #f1ebe2 35%, #dfe7e2 100%);
+}
+
+.scene {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 48px 28px 56px;
+  position: relative;
+}
+
+.scene::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(60, 166, 166, 0.14), transparent 60%),
+    radial-gradient(circle at 75% 20%, rgba(240, 93, 94, 0.18), transparent 55%);
+  filter: blur(0.2px);
+  z-index: -1;
+}
+
+.hero {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 32px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 36px;
+}
+
+.kicker {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+h1 {
+  font-size: clamp(2.6rem, 4vw, 3.6rem);
+  margin: 12px 0 8px;
+}
+
+.hero p {
+  margin: 0;
+  max-width: 420px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.sigil {
+  background: linear-gradient(160deg, #ffffff, #f9f3ea);
+  border: 1px solid rgba(16, 19, 23, 0.08);
+  box-shadow: 0 18px 40px var(--shadow);
+  border-radius: 18px;
+  padding: 16px;
+}
+
+.sigil-inner {
+  width: 220px;
+  height: 160px;
+  border-radius: 12px;
+  background: #13171d;
+  color: #f2e9d8;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.sigil-title {
+  font-size: 0.95rem;
+  letter-spacing: 0.12em;
+}
+
+.lights {
+  display: flex;
+  gap: 8px;
+}
+
+.light {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #cfd3d6;
+  box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.2);
+}
+
+.light.green {
+  background: var(--moss);
+}
+
+.light.amber {
+  background: var(--ember);
+}
+
+.light.red {
+  background: var(--rose);
+}
+
+.sigil-status {
+  font-size: 1.4rem;
+  letter-spacing: 0.08em;
+}
+
+.grid {
+  display: grid;
+  gap: 28px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.panel {
+  background: #ffffffd8;
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: 0 20px 40px rgba(16, 19, 23, 0.12);
+  border: 1px solid rgba(16, 19, 23, 0.06);
+  backdrop-filter: blur(6px);
+}
+
+.panel h2 {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.95rem;
+  margin: 0 0 20px;
+}
+
+.field {
+  margin-bottom: 16px;
+}
+
+.field label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+button {
+  border: none;
+  background: #19252f;
+  color: #fefcf8;
+  padding: 10px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(16, 19, 23, 0.2);
+}
+
+button.primary {
+  background: linear-gradient(140deg, var(--sea), #2f8f8f);
+  width: 100%;
+  margin-top: 8px;
+}
+
+input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(16, 19, 23, 0.15);
+  background: #f8f5ef;
+  font-size: 0.95rem;
+}
+
+.path {
+  font-size: 0.85rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.lights-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.lights-inline .light {
+  width: 14px;
+  height: 14px;
+  background: #cfd3d6;
+}
+
+.lights-inline .light.active {
+  background: var(--moss);
+  box-shadow: 0 0 8px rgba(107, 191, 122, 0.7);
+}
+
+.count {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.result {
+  margin-top: 16px;
+  font-size: 0.9rem;
+  color: #1f2b33;
+  white-space: pre-wrap;
+}
+
+.footer {
+  margin-top: 40px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 700px) {
+  .hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .sigil {
+    width: 100%;
+  }
+
+  .sigil-inner {
+    width: 100%;
+  }
+}

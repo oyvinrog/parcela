@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Parcela Vault</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="scene">
+      <header class="hero">
+        <div>
+          <div class="kicker">2-of-3 encrypted vault</div>
+          <h1>Parcela</h1>
+          <p>
+            Encrypt a file, split it into three shares, and recover it with any
+            two. Designed for distributed storage across devices.
+          </p>
+        </div>
+        <div class="sigil">
+          <div class="sigil-inner">
+            <div class="sigil-title">FILE.TXT</div>
+            <div class="lights">
+              <span class="light green" aria-hidden="true"></span>
+              <span class="light amber" aria-hidden="true"></span>
+              <span class="light red" aria-hidden="true"></span>
+            </div>
+            <div class="sigil-status">2 of 3</div>
+          </div>
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="panel">
+          <h2>Encrypt &amp; Split</h2>
+          <p class="muted">Choose a file, set a destination folder, and split into three shares.</p>
+
+          <div class="field">
+            <label>Input file</label>
+            <div class="row">
+              <button id="pick-input">Select file</button>
+              <span id="input-path" class="path">No file selected</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Share output folder</label>
+            <div class="row">
+              <button id="pick-out-dir">Select folder</button>
+              <span id="out-dir" class="path">No folder selected</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Password</label>
+            <input id="split-password" type="password" placeholder="Passphrase" />
+          </div>
+
+          <button id="split-action" class="primary">Split file</button>
+
+          <div class="result" id="split-result"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Combine &amp; Recover</h2>
+          <p class="muted">Select any two shares, provide the password, and recover the file.</p>
+
+          <div class="field">
+            <label>Share files</label>
+            <div class="row">
+              <button id="pick-shares">Select shares</button>
+              <span id="shares-path" class="path">No shares selected</span>
+            </div>
+            <div class="lights-inline">
+              <span class="light" id="share-1"></span>
+              <span class="light" id="share-2"></span>
+              <span class="light" id="share-3"></span>
+              <span id="shares-count" class="count">0 of 3 selected</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Recovered file</label>
+            <div class="row">
+              <button id="pick-output">Select save location</button>
+              <span id="output-path" class="path">No output selected</span>
+            </div>
+          </div>
+
+          <div class="field">
+            <label>Password</label>
+            <input id="combine-password" type="password" placeholder="Passphrase" />
+          </div>
+
+          <button id="combine-action" class="primary">Recover file</button>
+
+          <div class="result" id="combine-result"></div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="hint">Tip: keep shares on separate devices for real resilience.</div>
+      </footer>
+    </div>
+
+    <script src="main.js"></script>
+  </body>
+</html>

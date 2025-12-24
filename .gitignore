@@ -1,0 +1,86 @@
+# Rust build artifacts
+/target/
+
+# If you have a workspace and want to commit Cargo.lock for applications,
+# leave Cargo.lock tracked; uncomment the following line to ignore it for libraries
+# /Cargo.lock
+
+# Generated files
+/pkg/
+*.rlib
+
+# Editor directories and files
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backup and temp files
+*~
+*.swp
+*.lock
+
+# Node modules (if present)
+node_modules/
+
+# Coverage
+/coverage/
+
+# Tauri / Rust build
+/src-tauri/target/
+/target/
+
+# Cargo workspace artifacts
+# keep Cargo.lock for apps; uncomment to ignore for libraries
+# /Cargo.lock
+
+# Frontend/build artifacts
+/dist/
+/build/
+/out/
+/.parcel-cache/
+.parcel-cache/
+.cache/
+.vite/
+
+# Node logs
+/npm-debug.log*
+/yarn-debug.log*
+/yarn-error.log*
+
+# Environment and secrets
+.env
+.env.*
+/*.pem
+/*.key
+/*.p12
+/*.pfx
+secrets.*
+
+# Generated app bundles / installer outputs
+/dist-*/
+/release/
+
+# IDE/editor
+.idea/
+.vscode/
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+debug.log*
+
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
