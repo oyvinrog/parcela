@@ -2,9 +2,8 @@ name: Release GUI
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
 permissions:
   contents: write
@@ -38,10 +37,9 @@ jobs:
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Parcela ${{ github.ref_name }}"
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ github.event.release.id }}
+          releaseDraft: false
+          prerelease: ${{ github.event.release.prerelease }}
           projectPath: .
           includeDebug: false
           args: "--config src-tauri/tauri.conf.json"
