@@ -175,6 +175,25 @@ body::before {
   gap: 10px;
 }
 
+.selection-controls {
+  display: grid;
+  gap: 10px;
+}
+
+.select-all {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.select-all input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+
 .file-list {
   display: grid;
   gap: 10px;
@@ -194,6 +213,18 @@ body::before {
   background: #fff;
   cursor: pointer;
   transition: 0.2s ease;
+}
+
+.file-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.file-select {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
 }
 
 .file-item:hover {

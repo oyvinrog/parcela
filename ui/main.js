@@ -7,6 +7,7 @@ const state = {
   vaultPassword: "",
   vault: { version: 1, files: [] },
   selectedFileId: null,
+  selectedFileIds: new Set(),
 };
 
 const shareIndexRegex = /^(.*)\.share([1-3])$/;
@@ -20,6 +21,8 @@ const vaultPathEl = document.getElementById("vault-path");
 const vaultSavePathEl = document.getElementById("vault-save-path");
 const vaultCurrentPathEl = document.getElementById("vault-current-path");
 const vaultNameEl = document.getElementById("vault-name");
+const selectAllEl = document.getElementById("select-all-files");
+const recoverSelectedBtn = document.getElementById("recover-selected");
 
 const fileListEl = document.getElementById("file-list");
 const detailEmptyEl = document.getElementById("detail-empty");
@@ -87,6 +90,39 @@ function getAvailabilityClass(file) {
   return "fail";
 }
 
+function joinPath(dir, name) {
+  if (!dir) return name;
+  if (dir.endsWith("/") || dir.endsWith("\\")) return `${dir}${name}`;
+  if (dir.includes("\\")) return `${dir}\\${name}`;
+  return `${dir}/${name}`;
+}
+
+function updateSelectionUI() {
+  const total = state.vault.files.length;
+  const selectedCount = state.selectedFileIds.size;
+  const allSelected = total > 0 && selectedCount === total;
+
+  selectAllEl.checked = allSelected;
+  selectAllEl.indeterminate = selectedCount > 0 && selectedCount < total;
+  selectAllEl.disabled = total === 0;
+  recoverSelectedBtn.disabled = selectedCount === 0;
+  recoverSelectedBtn.textContent = allSelected ? "Recover all" : "Recover selected";
+}
+
+function setSelectedFiles(ids) {
+  state.selectedFileIds = new Set(ids);
+  updateSelectionUI();
+}
+
+function toggleSelectedFile(fileId, isSelected) {
+  if (isSelected) {
+    state.selectedFileIds.add(fileId);
+  } else {
+    state.selectedFileIds.delete(fileId);
+  }
+  updateSelectionUI();
+}
+
 async function refreshAvailability(file) {
   ensureAvailability(file);
   const paths = file.shares.map((p) => p || "");
@@ -120,9 +156,24 @@ function renderFileList() {
     }
     item.type = "button";
 
+    const info = document.createElement("div");
+    info.className = "file-info";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "file-select";
+    checkbox.checked = state.selectedFileIds.has(file.id);
+    checkbox.addEventListener("click", (event) => event.stopPropagation());
+    checkbox.addEventListener("change", () => {
+      toggleSelectedFile(file.id, checkbox.checked);
+    });
+
     const title = document.createElement("div");
     title.className = "file-title";
     title.textContent = file.name;
+
+    info.appendChild(checkbox);
+    info.appendChild(title);
 
     const meta = document.createElement("div");
     meta.className = "file-meta";
@@ -145,7 +196,7 @@ function renderFileList() {
     meta.appendChild(lights);
     meta.appendChild(count);
 
-    item.appendChild(title);
+    item.appendChild(info);
     item.appendChild(meta);
 
     item.addEventListener("click", () => {
@@ -156,6 +207,8 @@ function renderFileList() {
 
     fileListEl.appendChild(item);
   }
+
+  updateSelectionUI();
 }
 
 function renderDetail() {
@@ -251,6 +304,7 @@ async function handleOpenVault() {
     state.vault = vault;
     await refreshAllAvailability();
     state.selectedFileId = state.vault.files[0]?.id || null;
+    setSelectedFiles(state.selectedFileId ? [state.selectedFileId] : []);
     renderFileList();
     renderDetail();
     showVaultScreen();
@@ -277,6 +331,7 @@ async function handleCreateVault() {
     state.vaultPassword = password;
     state.vault = vault;
     state.selectedFileId = null;
+    setSelectedFiles([]);
     renderFileList();
     renderDetail();
     showVaultScreen();
@@ -312,6 +367,7 @@ async function handleAddFile() {
     await refreshAvailability(entry);
     await saveVault();
     state.selectedFileId = entry.id;
+    setSelectedFiles([entry.id]);
     renderFileList();
     renderDetail();
     setStatus("File added to vault.", "success");
@@ -385,6 +441,57 @@ async function handleRecoverFile() {
   }
 }
 
+async function handleRecoverSelected() {
+  detailResultEl.textContent = "";
+  const selectedFiles = state.vault.files.filter((entry) =>
+    state.selectedFileIds.has(entry.id)
+  );
+  if (selectedFiles.length === 0) return;
+
+  const outputDir = await invoke("pick_output_dir");
+  if (!outputDir) return;
+
+  setStatus("Recovering selected files...");
+  const recoveredPaths = [];
+  const errors = [];
+
+  for (const file of selectedFiles) {
+    ensureAvailability(file);
+    const availablePaths = file.shares.filter((path, idx) => path && file.available[idx]);
+    if (availablePaths.length < 2) {
+      errors.push(`${file.name}: need at least two available shares`);
+      continue;
+    }
+
+    const outputPath = joinPath(outputDir, file.name);
+    try {
+      await invoke("combine_shares", {
+        sharePaths: availablePaths.slice(0, 2),
+        outputPath,
+        password: state.vaultPassword,
+      });
+      recoveredPaths.push(outputPath);
+    } catch (err) {
+      errors.push(`${file.name}: ${err}`);
+    }
+  }
+
+  const messages = [];
+  if (recoveredPaths.length > 0) {
+    messages.push(`Recovered files:\n${recoveredPaths.join("\n")}`);
+  }
+  if (errors.length > 0) {
+    messages.push(`Errors:\n${errors.join("\n")}`);
+  }
+  detailResultEl.textContent = messages.join("\n\n");
+
+  if (recoveredPaths.length > 0) {
+    setStatus(`Recovered ${recoveredPaths.length} file(s).`, "success");
+  } else {
+    setStatus("Recovery failed.", "error");
+  }
+}
+
 async function handleRefreshStatus() {
   try {
     setStatus("Refreshing share status...");
@@ -416,6 +523,15 @@ document.getElementById("create-vault").addEventListener("click", handleCreateVa
 
 document.getElementById("add-file").addEventListener("click", handleAddFile);
 document.getElementById("refresh-status").addEventListener("click", handleRefreshStatus);
+selectAllEl.addEventListener("change", () => {
+  if (selectAllEl.checked) {
+    setSelectedFiles(state.vault.files.map((file) => file.id));
+  } else {
+    setSelectedFiles([]);
+  }
+  renderFileList();
+});
+recoverSelectedBtn.addEventListener("click", handleRecoverSelected);
 recoverBtn.addEventListener("click", handleRecoverFile);
 
 showLoginScreen();
