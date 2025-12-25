@@ -1,6 +1,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use rfd::FileDialog;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct VaultFile {
+    id: String,
+    name: String,
+    shares: [Option<String>; 3],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct VaultData {
+    version: u32,
+    files: Vec<VaultFile>,
+}
 
 #[tauri::command]
 fn pick_input_file() -> Option<String> {
@@ -24,6 +38,23 @@ fn pick_share_files() -> Option<Vec<String>> {
             .map(|path| path.to_string_lossy().to_string())
             .collect()
     })
+}
+
+#[tauri::command]
+fn pick_vault_file() -> Option<String> {
+    FileDialog::new()
+        .add_filter("Parcela Vault", &["pva"])
+        .pick_file()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn pick_vault_save() -> Option<String> {
+    FileDialog::new()
+        .add_filter("Parcela Vault", &["pva"])
+        .set_file_name("vault.pva")
+        .save_file()
+        .map(|path| path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -84,15 +115,61 @@ fn combine_shares(
     Ok(output_path)
 }
 
+#[tauri::command]
+fn create_vault(path: String, password: String) -> Result<VaultData, String> {
+    let vault = VaultData {
+        version: 1,
+        files: Vec::new(),
+    };
+    save_vault(path, password, vault.clone())?;
+    Ok(vault)
+}
+
+#[tauri::command]
+fn open_vault(path: String, password: String) -> Result<VaultData, String> {
+    let data = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let decrypted = parcela::decrypt(&data, &password).map_err(|e| e.to_string())?;
+    let vault: VaultData = serde_json::from_slice(&decrypted).map_err(|e| e.to_string())?;
+    Ok(vault)
+}
+
+#[tauri::command]
+fn save_vault(path: String, password: String, vault: VaultData) -> Result<(), String> {
+    let json = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
+    let encrypted = parcela::encrypt(&json, &password).map_err(|e| e.to_string())?;
+    std::fs::write(&path, encrypted).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn check_paths(paths: Vec<String>) -> Vec<bool> {
+    paths
+        .into_iter()
+        .map(|path| {
+            if path.trim().is_empty() {
+                false
+            } else {
+                std::path::Path::new(&path).exists()
+            }
+        })
+        .collect()
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             pick_input_file,
             pick_output_dir,
             pick_share_files,
+            pick_vault_file,
+            pick_vault_save,
             pick_output_file,
             split_file,
-            combine_shares
+            combine_shares,
+            create_vault,
+            open_vault,
+            save_vault,
+            check_paths
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
