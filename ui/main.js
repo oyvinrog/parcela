@@ -459,12 +459,6 @@ async function handleChangeShare(index) {
   const sharePath = await invoke("pick_input_file");
   if (!sharePath) return;
 
-  const info = getShareInfo(sharePath);
-  if (!info || info.baseName !== file.name || info.index !== index + 1) {
-    setStatus("Selected file does not match this share.", "error");
-    return;
-  }
-
   file.shares[index] = sharePath;
   await refreshAvailability(file);
   await saveVault();
