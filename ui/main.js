@@ -247,11 +247,21 @@ function renderDetail() {
     status.style.color = file.available[i] ? "#1d6b44" : "#8b6f5a";
     label.appendChild(status);
 
+    const actions = document.createElement("div");
+    actions.className = "share-actions";
+
+    const changeBtn = document.createElement("button");
+    changeBtn.type = "button";
+    changeBtn.textContent = "Change";
+    changeBtn.addEventListener("click", () => handleChangeShare(i));
+    actions.appendChild(changeBtn);
+
     const path = document.createElement("div");
     path.className = "path";
     path.textContent = file.shares[i] || "No location stored";
 
     card.appendChild(label);
+    card.appendChild(actions);
     card.appendChild(path);
     shareListEl.appendChild(card);
   }
@@ -439,6 +449,28 @@ async function handleRecoverFile() {
     detailResultEl.textContent = `Error: ${err}`;
     setStatus("Recovery failed.", "error");
   }
+}
+
+async function handleChangeShare(index) {
+  detailResultEl.textContent = "";
+  const file = state.vault.files.find((entry) => entry.id === state.selectedFileId);
+  if (!file) return;
+
+  const sharePath = await invoke("pick_input_file");
+  if (!sharePath) return;
+
+  const info = getShareInfo(sharePath);
+  if (!info || info.baseName !== file.name || info.index !== index + 1) {
+    setStatus("Selected file does not match this share.", "error");
+    return;
+  }
+
+  file.shares[index] = sharePath;
+  await refreshAvailability(file);
+  await saveVault();
+  renderFileList();
+  renderDetail();
+  setStatus("Share location updated.", "success");
 }
 
 async function handleRecoverSelected() {

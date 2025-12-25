@@ -320,6 +320,16 @@ body::before {
   font-size: 14px;
 }
 
+.share-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.share-actions button {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
 .share-card .path {
   font-size: 12px;
   color: var(--muted);
