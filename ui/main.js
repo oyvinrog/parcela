@@ -415,7 +415,6 @@ document.getElementById("open-vault").addEventListener("click", handleOpenVault)
 document.getElementById("create-vault").addEventListener("click", handleCreateVault);
 
 document.getElementById("add-file").addEventListener("click", handleAddFile);
-document.getElementById("import-shares").addEventListener("click", handleImportShares);
 document.getElementById("refresh-status").addEventListener("click", handleRefreshStatus);
 recoverBtn.addEventListener("click", handleRecoverFile);
 
