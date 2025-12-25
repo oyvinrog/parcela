@@ -62,6 +62,13 @@ function getFileName(path) {
   return parts[parts.length - 1] || path;
 }
 
+function getDirName(path) {
+  const parts = path.split(/[/\\]/);
+  if (parts.length <= 1) return "";
+  parts.pop();
+  return parts.join(path.includes("\\") ? "\\" : "/");
+}
+
 function getShareInfo(path) {
   const filename = getFileName(path);
   const match = filename.match(shareIndexRegex);
@@ -95,6 +102,57 @@ function joinPath(dir, name) {
   if (dir.endsWith("/") || dir.endsWith("\\")) return `${dir}${name}`;
   if (dir.includes("\\")) return `${dir}\\${name}`;
   return `${dir}/${name}`;
+}
+
+function setResultText(message) {
+  detailResultEl.textContent = message;
+}
+
+function showRecoveredResult(paths, errors) {
+  detailResultEl.innerHTML = "";
+
+  if (paths.length > 0) {
+    const header = document.createElement("div");
+    header.textContent =
+      paths.length === 1 ? "Recovered file saved to:" : "Recovered files saved to:";
+    detailResultEl.appendChild(header);
+
+    for (const path of paths) {
+      const row = document.createElement("div");
+      row.className = "result-row";
+
+      const pathEl = document.createElement("span");
+      pathEl.className = "result-path";
+      pathEl.textContent = path;
+
+      const openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.textContent = "Browse";
+      openBtn.addEventListener("click", async () => {
+        const dir = getDirName(path) || path;
+        try {
+          await invoke("open_path", { path: dir });
+        } catch (err) {
+          setStatus(`Error: ${err}`, "error");
+        }
+      });
+
+      row.appendChild(pathEl);
+      row.appendChild(openBtn);
+      detailResultEl.appendChild(row);
+    }
+  }
+
+  if (errors.length > 0) {
+    const errorHeader = document.createElement("div");
+    errorHeader.className = "result-errors";
+    errorHeader.textContent = "Errors:";
+    detailResultEl.appendChild(errorHeader);
+
+    const errorList = document.createElement("div");
+    errorList.textContent = errors.join("\n");
+    detailResultEl.appendChild(errorList);
+  }
 }
 
 function updateSelectionUI() {
@@ -352,7 +410,7 @@ async function handleCreateVault() {
 }
 
 async function handleAddFile() {
-  detailResultEl.textContent = "";
+  setResultText("");
   try {
     const inputPath = await invoke("pick_input_file");
     if (!inputPath) return;
@@ -387,7 +445,7 @@ async function handleAddFile() {
 }
 
 async function handleImportShares() {
-  detailResultEl.textContent = "";
+  setResultText("");
   try {
     const sharePaths = await invoke("pick_share_files");
     if (!sharePaths || sharePaths.length === 0) return;
@@ -423,13 +481,13 @@ async function handleImportShares() {
 }
 
 async function handleRecoverFile() {
-  detailResultEl.textContent = "";
+  setResultText("");
   const file = state.vault.files.find((entry) => entry.id === state.selectedFileId);
   if (!file) return;
 
   const availablePaths = file.shares.filter((path, idx) => path && file.available[idx]);
   if (availablePaths.length < 2) {
-    detailResultEl.textContent = "Need at least two available shares to recover.";
+    setResultText("Need at least two available shares to recover.");
     return;
   }
 
@@ -443,16 +501,16 @@ async function handleRecoverFile() {
       outputPath,
       password: state.vaultPassword,
     });
-    detailResultEl.textContent = `Recovered file saved to:\n${recovered}`;
+    showRecoveredResult([recovered], []);
     setStatus("File recovered.", "success");
   } catch (err) {
-    detailResultEl.textContent = `Error: ${err}`;
+    setResultText(`Error: ${err}`);
     setStatus("Recovery failed.", "error");
   }
 }
 
 async function handleChangeShare(index) {
-  detailResultEl.textContent = "";
+  setResultText("");
   const file = state.vault.files.find((entry) => entry.id === state.selectedFileId);
   if (!file) return;
 
@@ -468,7 +526,7 @@ async function handleChangeShare(index) {
 }
 
 async function handleRecoverSelected() {
-  detailResultEl.textContent = "";
+  setResultText("");
   const selectedFiles = state.vault.files.filter((entry) =>
     state.selectedFileIds.has(entry.id)
   );
@@ -502,14 +560,7 @@ async function handleRecoverSelected() {
     }
   }
 
-  const messages = [];
-  if (recoveredPaths.length > 0) {
-    messages.push(`Recovered files:\n${recoveredPaths.join("\n")}`);
-  }
-  if (errors.length > 0) {
-    messages.push(`Errors:\n${errors.join("\n")}`);
-  }
-  detailResultEl.textContent = messages.join("\n\n");
+  showRecoveredResult(recoveredPaths, errors);
 
   if (recoveredPaths.length > 0) {
     setStatus(`Recovered ${recoveredPaths.length} file(s).`, "success");

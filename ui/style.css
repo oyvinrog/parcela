@@ -444,6 +444,26 @@ input {
   white-space: pre-wrap;
 }
 
+.result-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.result-path {
+  font-size: 12px;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.result-errors {
+  margin-top: 12px;
+  font-weight: 600;
+  color: #8b3244;
+}
+
 .hidden {
   display: none;
 }

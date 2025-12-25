@@ -155,6 +155,11 @@ fn check_paths(paths: Vec<String>) -> Vec<bool> {
         .collect()
 }
 
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    open::that(path).map_err(|e| e.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -169,7 +174,8 @@ fn main() {
             create_vault,
             open_vault,
             save_vault,
-            check_paths
+            check_paths,
+            open_path
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
