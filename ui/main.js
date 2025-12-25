@@ -75,6 +75,18 @@ function ensureAvailability(file) {
   }
 }
 
+function getMissingCount(file) {
+  ensureAvailability(file);
+  return file.available.filter((available) => !available).length;
+}
+
+function getAvailabilityClass(file) {
+  const missingCount = getMissingCount(file);
+  if (missingCount === 0) return "ok";
+  if (missingCount === 1) return "warn";
+  return "fail";
+}
+
 async function refreshAvailability(file) {
   ensureAvailability(file);
   const paths = file.shares.map((p) => p || "");
@@ -118,10 +130,11 @@ function renderFileList() {
     const lights = document.createElement("div");
     lights.className = "lights-inline";
 
-    file.available.forEach((available) => {
+    const statusClass = getAvailabilityClass(file);
+    file.available.forEach(() => {
       const dot = document.createElement("span");
       dot.className = "light";
-      dot.classList.add(available ? "available" : "missing");
+      dot.classList.add(statusClass);
       lights.appendChild(dot);
     });
 
@@ -161,9 +174,10 @@ function renderDetail() {
   const availableCount = file.available.filter(Boolean).length;
   detailCountEl.textContent = `${availableCount} of 3 available`;
 
-  detailLightsEl.querySelectorAll(".light").forEach((el, idx) => {
-    el.classList.remove("available", "missing");
-    el.classList.add(file.available[idx] ? "available" : "missing");
+  const statusClass = getAvailabilityClass(file);
+  detailLightsEl.querySelectorAll(".light").forEach((el) => {
+    el.classList.remove("ok", "warn", "fail");
+    el.classList.add(statusClass);
   });
 
   shareListEl.innerHTML = "";
