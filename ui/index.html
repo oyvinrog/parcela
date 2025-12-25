@@ -7,100 +7,102 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <div class="scene">
-      <header class="hero">
-        <div>
-          <div class="kicker">2-of-3 encrypted vault</div>
-          <h1>Parcela</h1>
-          <p>
-            Encrypt a file, split it into three shares, and recover it with any
-            two. Designed for distributed storage across devices.
-          </p>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="logo">Parcela</div>
+          <div class="tag">2-of-3 shared vault</div>
         </div>
-        <div class="sigil">
-          <div class="sigil-inner">
-            <div class="sigil-title">FILE.TXT</div>
-            <div class="lights">
-              <span class="light green" aria-hidden="true"></span>
-              <span class="light amber" aria-hidden="true"></span>
-              <span class="light red" aria-hidden="true"></span>
-            </div>
-            <div class="sigil-status">2 of 3</div>
-          </div>
-        </div>
+        <div id="status-msg" class="status">Ready.</div>
       </header>
 
-      <main class="grid">
-        <section class="panel">
-          <h2>Encrypt &amp; Split</h2>
-          <p class="muted">Choose a file, set a destination folder, and split into three shares.</p>
+      <main>
+        <section id="login-screen" class="login-screen">
+          <div class="login-card">
+            <div class="login-header">
+              <h1>Vault Login</h1>
+              <p>One password unlocks the vault and encrypts every file inside.</p>
+            </div>
 
-          <div class="field">
-            <label>Input file</label>
-            <div class="row">
-              <button id="pick-input">Select file</button>
-              <span id="input-path" class="path">No file selected</span>
+            <div class="field">
+              <label>Vault password</label>
+              <input id="vault-password" type="password" placeholder="Passphrase" />
+            </div>
+
+            <div class="login-grid">
+              <div class="login-block">
+                <h2>Open vault</h2>
+                <div class="row">
+                  <button id="pick-vault">Select .pva</button>
+                  <span id="vault-path" class="path">No vault selected</span>
+                </div>
+                <button id="open-vault" class="primary">Open vault</button>
+              </div>
+              <div class="login-block">
+                <h2>Create vault</h2>
+                <div class="row">
+                  <button id="pick-vault-save">Choose location</button>
+                  <span id="vault-save-path" class="path">No destination selected</span>
+                </div>
+                <button id="create-vault" class="primary">Create vault</button>
+              </div>
             </div>
           </div>
-
-          <div class="field">
-            <label>Share output folder</label>
-            <div class="row">
-              <button id="pick-out-dir">Select folder</button>
-              <span id="out-dir" class="path">No folder selected</span>
-            </div>
-          </div>
-
-          <div class="field">
-            <label>Password</label>
-            <input id="split-password" type="password" placeholder="Passphrase" />
-          </div>
-
-          <button id="split-action" class="primary">Split file</button>
-
-          <div class="result" id="split-result"></div>
         </section>
 
-        <section class="panel">
-          <h2>Combine &amp; Recover</h2>
-          <p class="muted">Select any two shares, provide the password, and recover the file.</p>
-
-          <div class="field">
-            <label>Share files</label>
-            <div class="row">
-              <button id="pick-shares">Select shares</button>
-              <span id="shares-path" class="path">No shares selected</span>
+        <section id="vault-screen" class="vault-screen hidden">
+          <aside class="sidebar">
+            <div class="vault-meta">
+              <div class="vault-name" id="vault-name">Vault</div>
+              <div class="vault-path" id="vault-current-path"></div>
             </div>
-            <div class="lights-inline">
-              <span class="light" id="share-1"></span>
-              <span class="light" id="share-2"></span>
-              <span class="light" id="share-3"></span>
-              <span id="shares-count" class="count">0 of 3 selected</span>
+            <div class="vault-actions">
+              <button id="add-file" class="primary">Split &amp; Add File</button>
+              <button id="refresh-status">Refresh status</button>
             </div>
-          </div>
-
-          <div class="field">
-            <label>Recovered file</label>
-            <div class="row">
-              <button id="pick-output">Select save location</button>
-              <span id="output-path" class="path">No output selected</span>
+            <div class="selection-controls">
+              <label class="select-all">
+                <input id="select-all-files" type="checkbox" />
+                <span>Select all</span>
+              </label>
+              <button id="recover-selected">Recover selected</button>
             </div>
-          </div>
+            <div class="file-list" id="file-list"></div>
+          </aside>
 
-          <div class="field">
-            <label>Password</label>
-            <input id="combine-password" type="password" placeholder="Passphrase" />
-          </div>
+          <section class="detail">
+            <div id="detail-empty" class="detail-empty">
+              <h2>Select a file</h2>
+              <p>Choose a vault file to view share locations and recover it.</p>
+            </div>
 
-          <button id="combine-action" class="primary">Recover file</button>
+            <div id="detail-panel" class="detail-panel hidden">
+              <div class="detail-header">
+                <div>
+                  <div class="kicker">Vault file</div>
+                  <h2 id="detail-title">File</h2>
+                </div>
+                <div class="status-block">
+                  <div class="lights-inline" id="detail-lights">
+                    <span class="light" data-share="1" aria-hidden="true"></span>
+                    <span class="light" data-share="2" aria-hidden="true"></span>
+                    <span class="light" data-share="3" aria-hidden="true"></span>
+                  </div>
+                  <div class="share-count" id="detail-count"></div>
+                </div>
+              </div>
 
-          <div class="result" id="combine-result"></div>
+              <div class="share-list" id="share-list"></div>
+
+              <div class="detail-actions">
+                <button id="recover-file" class="primary">Recover file</button>
+              </div>
+
+              <div class="result" id="detail-result"></div>
+            </div>
+          </section>
         </section>
       </main>
-
-      <footer class="footer">
-        <div class="hint">Tip: keep shares on separate devices for real resilience.</div>
-      </footer>
     </div>
 
     <script src="main.js"></script>
