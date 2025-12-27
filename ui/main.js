@@ -5,9 +5,12 @@ const invoke =
 const state = {
   vaultPath: "",
   vaultPassword: "",
-  vault: { version: 1, files: [] },
+  vault: { version: 1, files: [], virtual_drives: [] },
   selectedFileId: null,
   selectedFileIds: new Set(),
+  selectedType: "file", // "file" or "drive"
+  unlockedDrives: new Map(), // drive_id -> { mount_path }
+  isMemoryMode: false, // true on Windows where virtual drives are memory-only
 };
 
 const shareIndexRegex = /^(.*)\.share([1-3])$/;
@@ -33,6 +36,13 @@ const detailCountEl = document.getElementById("detail-count");
 const shareListEl = document.getElementById("share-list");
 const detailResultEl = document.getElementById("detail-result");
 const recoverBtn = document.getElementById("recover-file");
+const fileActionsEl = document.getElementById("file-actions");
+const driveActionsEl = document.getElementById("drive-actions");
+const driveStatusEl = document.getElementById("drive-status");
+const driveMountPathEl = document.getElementById("drive-mount-path");
+const unlockDriveBtn = document.getElementById("unlock-drive");
+const lockDriveBtn = document.getElementById("lock-drive");
+const openDriveBtn = document.getElementById("open-drive");
 
 let pendingOpenPath = "";
 let pendingSavePath = "";
@@ -192,12 +202,42 @@ async function refreshAllAvailability() {
   for (const file of state.vault.files) {
     await refreshAvailability(file);
   }
+  for (const drive of state.vault.virtual_drives || []) {
+    await refreshAvailability(drive);
+  }
+}
+
+async function refreshUnlockedDrives() {
+  try {
+    const unlocked = await invoke("get_unlocked_drives");
+    state.unlockedDrives.clear();
+    for (const info of unlocked) {
+      state.unlockedDrives.set(info.drive_id, {
+        mount_path: info.mount_path,
+        name: info.name,
+      });
+    }
+  } catch (err) {
+    console.error("Failed to refresh unlocked drives:", err);
+  }
+}
+
+function isDriveUnlocked(driveId) {
+  return state.unlockedDrives.has(driveId);
+}
+
+function getDriveMountPath(driveId) {
+  const info = state.unlockedDrives.get(driveId);
+  return info ? info.mount_path : null;
 }
 
 function renderFileList() {
   fileListEl.innerHTML = "";
 
-  if (state.vault.files.length === 0) {
+  const allFiles = state.vault.files || [];
+  const allDrives = state.vault.virtual_drives || [];
+
+  if (allFiles.length === 0 && allDrives.length === 0) {
     const empty = document.createElement("div");
     empty.className = "path";
     empty.textContent = "No files in this vault yet.";
@@ -205,11 +245,78 @@ function renderFileList() {
     return;
   }
 
-  for (const file of state.vault.files) {
+  // Render virtual drives first
+  for (const drive of allDrives) {
+    ensureAvailability(drive);
+    const item = document.createElement("button");
+    item.className = "file-item drive-item";
+    if (drive.id === state.selectedFileId && state.selectedType === "drive") {
+      item.classList.add("active");
+    }
+    if (isDriveUnlocked(drive.id)) {
+      item.classList.add("unlocked");
+    }
+    item.type = "button";
+
+    const info = document.createElement("div");
+    info.className = "file-info";
+
+    const icon = document.createElement("span");
+    icon.className = "drive-icon";
+    icon.textContent = isDriveUnlocked(drive.id) ? "🔓" : "💾";
+
+    const title = document.createElement("div");
+    title.className = "file-title";
+    title.textContent = drive.name;
+
+    const sizeTag = document.createElement("span");
+    sizeTag.className = "size-tag";
+    sizeTag.textContent = `${drive.size_mb}MB`;
+
+    info.appendChild(icon);
+    info.appendChild(title);
+    info.appendChild(sizeTag);
+
+    const meta = document.createElement("div");
+    meta.className = "file-meta";
+
+    const lights = document.createElement("div");
+    lights.className = "lights-inline";
+
+    const statusClass = getAvailabilityClass(drive);
+    drive.available.forEach(() => {
+      const dot = document.createElement("span");
+      dot.className = "light";
+      dot.classList.add(statusClass);
+      lights.appendChild(dot);
+    });
+
+    const count = document.createElement("span");
+    const availableCount = drive.available.filter(Boolean).length;
+    count.textContent = `${availableCount}/3`;
+
+    meta.appendChild(lights);
+    meta.appendChild(count);
+
+    item.appendChild(info);
+    item.appendChild(meta);
+
+    item.addEventListener("click", () => {
+      state.selectedFileId = drive.id;
+      state.selectedType = "drive";
+      renderDetail();
+      renderFileList();
+    });
+
+    fileListEl.appendChild(item);
+  }
+
+  // Render regular files
+  for (const file of allFiles) {
     ensureAvailability(file);
     const item = document.createElement("button");
     item.className = "file-item";
-    if (file.id === state.selectedFileId) {
+    if (file.id === state.selectedFileId && state.selectedType === "file") {
       item.classList.add("active");
     }
     item.type = "button";
@@ -259,6 +366,7 @@ function renderFileList() {
 
     item.addEventListener("click", () => {
       state.selectedFileId = file.id;
+      state.selectedType = "file";
       renderDetail();
       renderFileList();
     });
@@ -270,22 +378,38 @@ function renderFileList() {
 }
 
 function renderDetail() {
-  const file = state.vault.files.find((entry) => entry.id === state.selectedFileId);
-  if (!file) {
+  // Check if we're showing a virtual drive or a file
+  let entry = null;
+  let isDrive = false;
+
+  if (state.selectedType === "drive") {
+    entry = (state.vault.virtual_drives || []).find((d) => d.id === state.selectedFileId);
+    isDrive = true;
+  } else {
+    entry = (state.vault.files || []).find((f) => f.id === state.selectedFileId);
+    isDrive = false;
+  }
+
+  if (!entry) {
     detailEmptyEl.classList.remove("hidden");
     detailPanelEl.classList.add("hidden");
     return;
   }
 
-  ensureAvailability(file);
+  ensureAvailability(entry);
   detailEmptyEl.classList.add("hidden");
   detailPanelEl.classList.remove("hidden");
-  detailTitleEl.textContent = file.name;
+  
+  if (isDrive) {
+    detailTitleEl.textContent = `${entry.name} (Virtual Drive)`;
+  } else {
+    detailTitleEl.textContent = entry.name;
+  }
 
-  const availableCount = file.available.filter(Boolean).length;
+  const availableCount = entry.available.filter(Boolean).length;
   detailCountEl.textContent = `${availableCount} of 3 available`;
 
-  const statusClass = getAvailabilityClass(file);
+  const statusClass = getAvailabilityClass(entry);
   detailLightsEl.querySelectorAll(".light").forEach((el) => {
     el.classList.remove("ok", "warn", "fail");
     el.classList.add(statusClass);
@@ -301,8 +425,8 @@ function renderDetail() {
     label.innerHTML = `<span>Share ${i + 1}</span>`;
 
     const status = document.createElement("span");
-    status.textContent = file.available[i] ? "Available" : "Missing";
-    status.style.color = file.available[i] ? "#1d6b44" : "#8b6f5a";
+    status.textContent = entry.available[i] ? "Available" : "Missing";
+    status.style.color = entry.available[i] ? "#1d6b44" : "#8b6f5a";
     label.appendChild(status);
 
     const actions = document.createElement("div");
@@ -311,12 +435,28 @@ function renderDetail() {
     const changeBtn = document.createElement("button");
     changeBtn.type = "button";
     changeBtn.textContent = "Change";
-    changeBtn.addEventListener("click", () => handleChangeShare(i));
+    changeBtn.addEventListener("click", () => handleChangeShare(i, isDrive));
     actions.appendChild(changeBtn);
+
+    const browseBtn = document.createElement("button");
+    browseBtn.type = "button";
+    browseBtn.textContent = "Browse";
+    browseBtn.disabled = !entry.shares[i] || !entry.available[i];
+    browseBtn.addEventListener("click", async () => {
+      const sharePath = entry.shares[i];
+      if (!sharePath) return;
+      const dir = getDirName(sharePath) || sharePath;
+      try {
+        await invoke("open_path", { path: dir });
+      } catch (err) {
+        setStatus(`Error: ${err}`, "error");
+      }
+    });
+    actions.appendChild(browseBtn);
 
     const path = document.createElement("div");
     path.className = "path";
-    path.textContent = file.shares[i] || "No location stored";
+    path.textContent = entry.shares[i] || "No location stored";
 
     card.appendChild(label);
     card.appendChild(actions);
@@ -324,7 +464,28 @@ function renderDetail() {
     shareListEl.appendChild(card);
   }
 
-  recoverBtn.disabled = availableCount < 2;
+  // Show/hide appropriate action buttons
+  if (isDrive) {
+    fileActionsEl.classList.add("hidden");
+    driveActionsEl.classList.remove("hidden");
+
+    const isUnlocked = isDriveUnlocked(entry.id);
+    unlockDriveBtn.disabled = isUnlocked || availableCount < 2;
+    lockDriveBtn.disabled = !isUnlocked;
+    openDriveBtn.disabled = !isUnlocked;
+
+    if (isUnlocked) {
+      driveStatusEl.classList.remove("hidden");
+      driveMountPathEl.textContent = getDriveMountPath(entry.id) || "Unknown";
+    } else {
+      driveStatusEl.classList.add("hidden");
+    }
+  } else {
+    fileActionsEl.classList.remove("hidden");
+    driveActionsEl.classList.add("hidden");
+    driveStatusEl.classList.add("hidden");
+    recoverBtn.disabled = availableCount < 2;
+  }
 }
 
 async function saveVault() {
@@ -370,9 +531,27 @@ async function handleOpenVault() {
     state.vaultPath = pendingOpenPath;
     state.vaultPassword = password;
     state.vault = vault;
+    // Ensure virtual_drives array exists
+    if (!state.vault.virtual_drives) {
+      state.vault.virtual_drives = [];
+    }
     await refreshAllAvailability();
-    state.selectedFileId = state.vault.files[0]?.id || null;
-    setSelectedFiles(state.selectedFileId ? [state.selectedFileId] : []);
+    await refreshUnlockedDrives();
+    
+    // Select first item (drive or file)
+    const drives = state.vault.virtual_drives || [];
+    const files = state.vault.files || [];
+    if (drives.length > 0) {
+      state.selectedFileId = drives[0].id;
+      state.selectedType = "drive";
+    } else if (files.length > 0) {
+      state.selectedFileId = files[0].id;
+      state.selectedType = "file";
+    } else {
+      state.selectedFileId = null;
+      state.selectedType = "file";
+    }
+    setSelectedFiles(state.selectedFileId && state.selectedType === "file" ? [state.selectedFileId] : []);
     renderFileList();
     renderDetail();
     showVaultScreen();
@@ -509,20 +688,146 @@ async function handleRecoverFile() {
   }
 }
 
-async function handleChangeShare(index) {
+async function handleChangeShare(index, isDrive = false) {
   setResultText("");
-  const file = state.vault.files.find((entry) => entry.id === state.selectedFileId);
-  if (!file) return;
+  let entry;
+  if (isDrive) {
+    entry = (state.vault.virtual_drives || []).find((d) => d.id === state.selectedFileId);
+  } else {
+    entry = state.vault.files.find((f) => f.id === state.selectedFileId);
+  }
+  if (!entry) return;
 
   const sharePath = await invoke("pick_input_file");
   if (!sharePath) return;
 
-  file.shares[index] = sharePath;
-  await refreshAvailability(file);
+  entry.shares[index] = sharePath;
+  await refreshAvailability(entry);
   await saveVault();
   renderFileList();
   renderDetail();
   setStatus("Share location updated.", "success");
+}
+
+async function handleCreateVirtualDrive() {
+  setResultText("");
+  try {
+    const name = prompt("Enter a name for the virtual drive:", "My Secure Drive");
+    if (!name || name.trim() === "") return;
+
+    const sizeStr = prompt("Enter size in MB (default: 64):", "64");
+    if (sizeStr === null) return;
+    const sizeMb = parseInt(sizeStr, 10) || 64;
+
+    const outDir = await invoke("pick_output_dir");
+    if (!outDir) return;
+
+    setStatus("Creating virtual drive...");
+    const driveInfo = await invoke("create_virtual_drive", {
+      name: name.trim(),
+      sizeMb,
+      outDir,
+      password: state.vaultPassword,
+    });
+
+    // Add to vault
+    if (!state.vault.virtual_drives) {
+      state.vault.virtual_drives = [];
+    }
+    state.vault.virtual_drives.push(driveInfo);
+    await saveVault();
+
+    // Refresh and select the new drive
+    await refreshAvailability(driveInfo);
+    state.selectedFileId = driveInfo.id;
+    state.selectedType = "drive";
+    renderFileList();
+    renderDetail();
+    setStatus("Virtual drive created.", "success");
+  } catch (err) {
+    setStatus(`Error: ${err}`, "error");
+  }
+}
+
+async function handleUnlockDrive() {
+  setResultText("");
+  const drive = (state.vault.virtual_drives || []).find(
+    (d) => d.id === state.selectedFileId
+  );
+  if (!drive) return;
+
+  ensureAvailability(drive);
+  const availablePaths = drive.shares.filter((path, idx) => path && drive.available[idx]);
+  if (availablePaths.length < 2) {
+    setResultText("Need at least two available shares to unlock.");
+    return;
+  }
+
+  try {
+    setStatus("Unlocking drive...");
+    const unlockInfo = await invoke("unlock_virtual_drive", {
+      sharePaths: availablePaths.slice(0, 2),
+      password: state.vaultPassword,
+    });
+
+    state.unlockedDrives.set(unlockInfo.drive_id, {
+      mount_path: unlockInfo.mount_path,
+      name: unlockInfo.name,
+    });
+
+    renderFileList();
+    renderDetail();
+    setResultText(`Drive unlocked at: ${unlockInfo.mount_path}`);
+    setStatus("Drive unlocked.", "success");
+  } catch (err) {
+    setResultText(`Error: ${err}`);
+    setStatus("Unlock failed.", "error");
+  }
+}
+
+async function handleLockDrive() {
+  setResultText("");
+  const drive = (state.vault.virtual_drives || []).find(
+    (d) => d.id === state.selectedFileId
+  );
+  if (!drive) return;
+
+  try {
+    setStatus("Locking drive...");
+    await invoke("lock_virtual_drive", {
+      driveId: drive.id,
+      sharePaths: drive.shares,
+      password: state.vaultPassword,
+    });
+
+    state.unlockedDrives.delete(drive.id);
+    renderFileList();
+    renderDetail();
+    setResultText("Drive locked and content saved.");
+    setStatus("Drive locked.", "success");
+  } catch (err) {
+    setResultText(`Error: ${err}`);
+    setStatus("Lock failed.", "error");
+  }
+}
+
+async function handleOpenDrive() {
+  const drive = (state.vault.virtual_drives || []).find(
+    (d) => d.id === state.selectedFileId
+  );
+  if (!drive) return;
+
+  const mountPath = getDriveMountPath(drive.id);
+  if (!mountPath) {
+    setStatus("Drive is not unlocked.", "error");
+    return;
+  }
+
+  try {
+    await invoke("open_path", { path: mountPath });
+  } catch (err) {
+    setStatus(`Error: ${err}`, "error");
+  }
 }
 
 async function handleRecoverSelected() {
@@ -599,6 +904,7 @@ document.getElementById("open-vault").addEventListener("click", handleOpenVault)
 document.getElementById("create-vault").addEventListener("click", handleCreateVault);
 
 document.getElementById("add-file").addEventListener("click", handleAddFile);
+document.getElementById("add-virtual-drive").addEventListener("click", handleCreateVirtualDrive);
 document.getElementById("refresh-status").addEventListener("click", handleRefreshStatus);
 selectAllEl.addEventListener("change", () => {
   if (selectAllEl.checked) {
@@ -610,6 +916,23 @@ selectAllEl.addEventListener("change", () => {
 });
 recoverSelectedBtn.addEventListener("click", handleRecoverSelected);
 recoverBtn.addEventListener("click", handleRecoverFile);
+unlockDriveBtn.addEventListener("click", handleUnlockDrive);
+lockDriveBtn.addEventListener("click", handleLockDrive);
+openDriveBtn.addEventListener("click", handleOpenDrive);
+
+// Check if we're on a platform that uses memory-only mode (Windows)
+// and hide the "Open in Browser" button if so
+(async function initPlatformSettings() {
+  try {
+    state.isMemoryMode = await invoke("uses_memory_mode");
+    if (state.isMemoryMode) {
+      // On Windows, virtual drives are memory-only; there's no directory to open
+      openDriveBtn.style.display = "none";
+    }
+  } catch (err) {
+    console.warn("Failed to check memory mode:", err);
+  }
+})();
 
 showLoginScreen();
 renderFileList();

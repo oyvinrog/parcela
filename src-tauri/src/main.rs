@@ -2,18 +2,56 @@
 
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Mutex;
 
+/// Represents a regular file entry in the vault
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct VaultFile {
     id: String,
     name: String,
     shares: [Option<String>; 3],
+    #[serde(default)]
+    file_type: FileType,
+}
+
+/// Type of entry in the vault
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum FileType {
+    #[default]
+    Regular,
+    VirtualDrive,
+}
+
+/// Virtual drive entry with its encrypted data and metadata
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct VaultVirtualDrive {
+    id: String,
+    name: String,
+    size_mb: u32,
+    shares: [Option<String>; 3],
+    /// Drive metadata stored for reconstruction
+    #[serde(default)]
+    created_at: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct VaultData {
     version: u32,
     files: Vec<VaultFile>,
+    #[serde(default)]
+    virtual_drives: Vec<VaultVirtualDrive>,
+}
+
+/// Runtime state for unlocked virtual drives
+struct UnlockedDriveState {
+    drive: parcela::VirtualDrive,
+    mount_path: String,
+}
+
+lazy_static::lazy_static! {
+    static ref UNLOCKED_DRIVES: Mutex<HashMap<String, UnlockedDriveState>> = Mutex::new(HashMap::new());
 }
 
 #[tauri::command]
@@ -120,6 +158,7 @@ fn create_vault(path: String, password: String) -> Result<VaultData, String> {
     let vault = VaultData {
         version: 1,
         files: Vec::new(),
+        virtual_drives: Vec::new(),
     };
     save_vault(path, password, vault.clone())?;
     Ok(vault)
@@ -160,6 +199,209 @@ fn open_path(path: String) -> Result<(), String> {
     open::that(path).map_err(|e| e.to_string())
 }
 
+/// Create a new virtual drive in the vault
+#[tauri::command]
+fn create_virtual_drive(
+    name: String,
+    size_mb: u32,
+    out_dir: String,
+    password: String,
+) -> Result<VaultVirtualDrive, String> {
+    let drive = parcela::VirtualDrive::new(name.clone(), size_mb);
+    let drive_id = drive.metadata.id.clone();
+    let created_at = drive.metadata.created_at;
+
+    // Encode and encrypt the drive
+    let encoded = drive.encode().map_err(|e| e.to_string())?;
+    let encrypted = parcela::encrypt(&encoded, &password).map_err(|e| e.to_string())?;
+
+    // Split into shares
+    let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
+
+    // Save shares to the output directory
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+    let base_name = format!("{}.vdrive", name.replace(['/', '\\', ':'], "_"));
+
+    let mut share_paths: [Option<String>; 3] = [None, None, None];
+    for share in shares.iter() {
+        let filename = format!("{}.share{}", base_name, share.index);
+        let path = std::path::PathBuf::from(&out_dir).join(filename);
+        let data = parcela::encode_share(share);
+        std::fs::write(&path, data).map_err(|e| e.to_string())?;
+        share_paths[(share.index - 1) as usize] = Some(path.to_string_lossy().to_string());
+    }
+
+    Ok(VaultVirtualDrive {
+        id: drive_id,
+        name,
+        size_mb,
+        shares: share_paths,
+        created_at,
+    })
+}
+
+/// Unlock a virtual drive (mount it as a RAM filesystem)
+#[tauri::command]
+fn unlock_virtual_drive(
+    share_paths: Vec<String>,
+    password: String,
+) -> Result<UnlockedDriveInfo, String> {
+    if share_paths.len() < 2 {
+        return Err("need at least two shares".to_string());
+    }
+
+    // Read and decode shares
+    let mut shares = Vec::with_capacity(share_paths.len());
+    for path in &share_paths {
+        let data = std::fs::read(path).map_err(|e| e.to_string())?;
+        let share = parcela::decode_share(&data).map_err(|e| e.to_string())?;
+        shares.push(share);
+    }
+
+    // Combine shares and decrypt
+    let encrypted = parcela::combine_shares(&shares).map_err(|e| e.to_string())?;
+    let decrypted = parcela::decrypt(&encrypted, &password).map_err(|e| e.to_string())?;
+
+    // Decode the virtual drive
+    let drive = parcela::VirtualDrive::decode(&decrypted).map_err(|e| e.to_string())?;
+    let drive_id = drive.metadata.id.clone();
+    let drive_name = drive.metadata.name.clone();
+
+    // Unlock (mount) the drive
+    let mount_path = parcela::unlock_drive(&drive).map_err(|e| e.to_string())?;
+    let mount_path_str = mount_path.to_string_lossy().to_string();
+
+    // Store the unlocked state
+    UNLOCKED_DRIVES
+        .lock()
+        .map_err(|_| "failed to acquire lock")?
+        .insert(
+            drive_id.clone(),
+            UnlockedDriveState {
+                drive,
+                mount_path: mount_path_str.clone(),
+            },
+        );
+
+    Ok(UnlockedDriveInfo {
+        drive_id,
+        name: drive_name,
+        mount_path: mount_path_str,
+    })
+}
+
+/// Info about an unlocked drive
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct UnlockedDriveInfo {
+    drive_id: String,
+    name: String,
+    mount_path: String,
+}
+
+/// Lock a virtual drive (unmount and re-encrypt)
+#[tauri::command]
+fn lock_virtual_drive(
+    drive_id: String,
+    share_paths: [Option<String>; 3],
+    password: String,
+) -> Result<(), String> {
+    // Get the unlocked drive state
+    let mut state = UNLOCKED_DRIVES
+        .lock()
+        .map_err(|_| "failed to acquire lock")?
+        .remove(&drive_id)
+        .ok_or("drive is not unlocked")?;
+
+    // Lock the drive (captures content)
+    // If this fails, re-insert the state to avoid orphaning the drive
+    if let Err(e) = parcela::lock_drive(&mut state.drive) {
+        // Re-insert the state so user can retry
+        if let Ok(mut drives) = UNLOCKED_DRIVES.lock() {
+            drives.insert(drive_id, state);
+        }
+        return Err(e.to_string());
+    }
+
+    // Re-encode, encrypt, and save shares
+    // If any of these fail, preserve the state so user can retry saving
+    let save_result = (|| -> Result<(), String> {
+        let encoded = state.drive.encode().map_err(|e| e.to_string())?;
+        let encrypted = parcela::encrypt(&encoded, &password).map_err(|e| e.to_string())?;
+
+        // Re-split into shares
+        let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
+
+        // Save to the existing share locations
+        for share in shares.iter() {
+            let idx = (share.index - 1) as usize;
+            if let Some(path) = &share_paths[idx] {
+                let data = parcela::encode_share(share);
+                std::fs::write(path, data).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    })();
+
+    if let Err(e) = save_result {
+        // Drive is locked (removed from MOUNTED_DRIVES) but content is captured.
+        // Keep it in UNLOCKED_DRIVES so user can retry saving.
+        // Clear mount path since it's no longer mounted.
+        state.mount_path = String::new();
+        if let Ok(mut drives) = UNLOCKED_DRIVES.lock() {
+            drives.insert(drive_id, state);
+        }
+        return Err(format!(
+            "drive locked but failed to save shares: {}. Content preserved for retry.",
+            e
+        ));
+    }
+
+    Ok(())
+}
+
+/// Check if a virtual drive is currently unlocked
+#[tauri::command]
+fn is_drive_unlocked(drive_id: String) -> bool {
+    UNLOCKED_DRIVES
+        .lock()
+        .map(|drives| drives.contains_key(&drive_id))
+        .unwrap_or(false)
+}
+
+/// Get mount path for an unlocked drive
+#[tauri::command]
+fn get_drive_mount_path(drive_id: String) -> Option<String> {
+    UNLOCKED_DRIVES
+        .lock()
+        .ok()
+        .and_then(|drives| drives.get(&drive_id).map(|s| s.mount_path.clone()))
+}
+
+/// Get list of all unlocked drives
+#[tauri::command]
+fn get_unlocked_drives() -> Vec<UnlockedDriveInfo> {
+    UNLOCKED_DRIVES
+        .lock()
+        .map(|drives| {
+            drives
+                .iter()
+                .map(|(id, state)| UnlockedDriveInfo {
+                    drive_id: id.clone(),
+                    name: state.drive.metadata.name.clone(),
+                    mount_path: state.mount_path.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Check if the platform uses memory-only mode for virtual drives.
+/// On Windows, virtual drives are kept in memory only (no actual directory on disk).
+#[tauri::command]
+fn uses_memory_mode() -> bool {
+    parcela::uses_memory_mode()
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -175,7 +417,15 @@ fn main() {
             open_vault,
             save_vault,
             check_paths,
-            open_path
+            open_path,
+            // Virtual drive commands
+            create_virtual_drive,
+            unlock_virtual_drive,
+            lock_virtual_drive,
+            is_drive_unlocked,
+            get_drive_mount_path,
+            get_unlocked_drives,
+            uses_memory_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
