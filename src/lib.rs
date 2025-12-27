@@ -6,8 +6,10 @@ use sha2::{Digest, Sha256};
 pub mod virtual_drive;
 
 pub use virtual_drive::{
-    VirtualDrive, VirtualDriveError, VirtualDriveMetadata,
-    get_mount_path, get_mounted_path, is_mounted, lock_drive, unlock_drive,
+    VirtualDrive, VirtualDriveError, VirtualDriveMetadata, MemoryFileSystem,
+    get_mount_path, get_mounted_path, is_mounted, is_memory_mode, lock_drive, unlock_drive,
+    uses_memory_mode, vdrive_create_dir, vdrive_delete_file, vdrive_list_files,
+    vdrive_read_file, vdrive_write_file,
     MAGIC_VDRIVE, DEFAULT_DRIVE_SIZE_MB,
 };
 

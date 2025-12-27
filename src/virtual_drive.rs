@@ -2,11 +2,237 @@
 //!
 //! A virtual drive is stored encrypted and split into shares like any other file.
 //! When unlocked, it creates a temporary filesystem in RAM (tmpfs) that leaves no trace.
+//!
+//! On Windows, files are stored entirely in memory (not on disk) and accessed via
+//! dedicated file operation functions, ensuring no sensitive data touches the disk.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+/// In-memory file storage for Windows (and optionally other platforms)
+/// This ensures files never touch the disk
+#[derive(Clone, Debug, Default)]
+pub struct MemoryFileSystem {
+    /// Files stored as path -> content
+    files: HashMap<String, Vec<u8>>,
+    /// Directories (stored as paths ending with /)
+    directories: std::collections::HashSet<String>,
+}
+
+impl MemoryFileSystem {
+    pub fn new() -> Self {
+        Self {
+            files: HashMap::new(),
+            directories: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Write a file to memory
+    pub fn write_file(&mut self, path: &str, content: Vec<u8>) {
+        // Ensure parent directories exist
+        let path = Self::normalize_path(path);
+        if let Some(parent) = Self::parent_path(&path) {
+            self.create_dir_all(&parent);
+        }
+        self.files.insert(path, content);
+    }
+
+    /// Read a file from memory
+    pub fn read_file(&self, path: &str) -> Option<&Vec<u8>> {
+        let path = Self::normalize_path(path);
+        self.files.get(&path)
+    }
+
+    /// Delete a file from memory
+    pub fn delete_file(&mut self, path: &str) -> bool {
+        let path = Self::normalize_path(path);
+        self.files.remove(&path).is_some()
+    }
+
+    /// Check if a file exists
+    pub fn file_exists(&self, path: &str) -> bool {
+        let path = Self::normalize_path(path);
+        self.files.contains_key(&path)
+    }
+
+    /// Create a directory
+    pub fn create_dir(&mut self, path: &str) {
+        let mut path = Self::normalize_path(path);
+        if !path.ends_with('/') {
+            path.push('/');
+        }
+        self.directories.insert(path);
+    }
+
+    /// Create directory and all parent directories
+    pub fn create_dir_all(&mut self, path: &str) {
+        let path = Self::normalize_path(path);
+        let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let mut current = String::new();
+        for part in parts {
+            current.push_str(part);
+            current.push('/');
+            self.directories.insert(current.clone());
+        }
+    }
+
+    /// List all files and directories
+    pub fn list_all(&self) -> Vec<String> {
+        let mut entries: Vec<String> = self.files.keys().cloned().collect();
+        entries.extend(self.directories.iter().cloned());
+        entries.sort();
+        entries
+    }
+
+    /// List contents of a directory
+    pub fn list_dir(&self, path: &str) -> Vec<String> {
+        let mut dir_path = Self::normalize_path(path);
+        if !dir_path.is_empty() && !dir_path.ends_with('/') {
+            dir_path.push('/');
+        }
+
+        let mut entries = std::collections::HashSet::new();
+
+        // Find files in this directory
+        for file_path in self.files.keys() {
+            if let Some(relative) = file_path.strip_prefix(&dir_path) {
+                // Get just the first component
+                if let Some(first_component) = relative.split('/').next() {
+                    if !first_component.is_empty() {
+                        // Check if it's a file or has more components (directory)
+                        if relative.contains('/') {
+                            entries.insert(format!("{}/", first_component));
+                        } else {
+                            entries.insert(first_component.to_string());
+                        }
+                    }
+                }
+            } else if dir_path.is_empty() {
+                // Root listing
+                if let Some(first_component) = file_path.split('/').next() {
+                    if !first_component.is_empty() {
+                        if file_path.contains('/') {
+                            entries.insert(format!("{}/", first_component));
+                        } else {
+                            entries.insert(first_component.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Find subdirectories
+        for dir in &self.directories {
+            if let Some(relative) = dir.strip_prefix(&dir_path) {
+                if let Some(first_component) = relative.split('/').next() {
+                    if !first_component.is_empty() {
+                        entries.insert(format!("{}/", first_component));
+                    }
+                }
+            } else if dir_path.is_empty() {
+                if let Some(first_component) = dir.split('/').next() {
+                    if !first_component.is_empty() {
+                        entries.insert(format!("{}/", first_component));
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<String> = entries.into_iter().collect();
+        result.sort();
+        result
+    }
+
+    /// Clear all files (secure wipe - just drops from memory)
+    pub fn clear(&mut self) {
+        self.files.clear();
+        self.directories.clear();
+    }
+
+    /// Serialize to the archive format used by disk-based drives
+    pub fn to_archive(&self) -> Vec<u8> {
+        let mut data = Vec::new();
+
+        // Write directories first
+        for dir in &self.directories {
+            let dir_bytes = dir.as_bytes();
+            data.extend_from_slice(&(dir_bytes.len() as u32).to_be_bytes());
+            data.extend_from_slice(dir_bytes);
+            data.extend_from_slice(&0u32.to_be_bytes()); // No content for dirs
+        }
+
+        // Write files
+        for (path, content) in &self.files {
+            let path_bytes = path.as_bytes();
+            data.extend_from_slice(&(path_bytes.len() as u32).to_be_bytes());
+            data.extend_from_slice(path_bytes);
+            data.extend_from_slice(&(content.len() as u32).to_be_bytes());
+            data.extend_from_slice(content);
+        }
+
+        data
+    }
+
+    /// Deserialize from the archive format
+    pub fn from_archive(data: &[u8]) -> Self {
+        let mut fs = Self::new();
+        let mut offset = 0;
+
+        while offset + 4 <= data.len() {
+            let name_len = u32::from_be_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+
+            if offset + name_len > data.len() {
+                break;
+            }
+
+            let name = String::from_utf8_lossy(&data[offset..offset + name_len]).to_string();
+            offset += name_len;
+
+            if offset + 4 > data.len() {
+                break;
+            }
+
+            let content_len = u32::from_be_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]) as usize;
+            offset += 4;
+
+            if name.ends_with('/') {
+                // It's a directory
+                fs.directories.insert(name);
+            } else {
+                if offset + content_len > data.len() {
+                    break;
+                }
+                let content = data[offset..offset + content_len].to_vec();
+                fs.files.insert(name, content);
+                offset += content_len;
+            }
+        }
+
+        fs
+    }
+
+    fn normalize_path(path: &str) -> String {
+        path.replace('\\', "/").trim_start_matches('/').to_string()
+    }
+
+    fn parent_path(path: &str) -> Option<String> {
+        let path = path.trim_end_matches('/');
+        path.rfind('/').map(|idx| path[..idx].to_string())
+    }
+}
 
 /// Magic bytes identifying a virtual drive container
 pub const MAGIC_VDRIVE: &[u8; 8] = b"PVDRIV01";
@@ -167,11 +393,25 @@ impl VirtualDrive {
 pub struct MountedDriveState {
     pub drive_id: String,
     pub mount_path: PathBuf,
+    /// Memory-based filesystem (used on Windows for security)
+    pub memory_fs: Option<MemoryFileSystem>,
+}
+
+impl MountedDriveState {
+    /// Check if this drive uses memory-only storage
+    pub fn is_memory_mode(&self) -> bool {
+        self.memory_fs.is_some()
+    }
 }
 
 // Global state for tracking mounted drives
 lazy_static::lazy_static! {
     static ref MOUNTED_DRIVES: Mutex<HashMap<String, MountedDriveState>> = Mutex::new(HashMap::new());
+}
+
+/// Check if the current platform uses memory-only mode
+pub fn uses_memory_mode() -> bool {
+    cfg!(target_os = "windows")
 }
 
 /// Get the mount point path for a virtual drive
@@ -219,9 +459,11 @@ pub fn get_mounted_path(drive_id: &str) -> Option<PathBuf> {
 
 /// Unlock (mount) a virtual drive as a RAM-backed filesystem
 ///
-/// Creates a directory in /tmp which is typically already a tmpfs on modern
-/// Linux systems. This approach doesn't require root privileges while still
-/// keeping data in RAM. On lock, files are securely wiped before deletion.
+/// On Linux/macOS: Creates a directory in /tmp which is typically already a tmpfs.
+/// On Windows: Uses memory-only storage - files never touch the disk.
+///
+/// Returns the mount path. On Windows, this is a virtual path for display only;
+/// use the `vdrive_*` functions to interact with files.
 pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> {
     let drive_id = &drive.metadata.id;
 
@@ -232,13 +474,28 @@ pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> 
 
     let mount_path = get_mount_path(drive_id);
 
-    // Create the directory (on most Linux systems, /tmp is already tmpfs)
-    std::fs::create_dir_all(&mount_path)?;
+    #[cfg(target_os = "windows")]
+    let memory_fs = {
+        // On Windows, use memory-only storage for security
+        let fs = if !drive.content.is_empty() {
+            MemoryFileSystem::from_archive(&drive.content)
+        } else {
+            MemoryFileSystem::new()
+        };
+        Some(fs)
+    };
 
-    // Extract any saved content to the directory
-    if !drive.content.is_empty() {
-        extract_content_to_mount(&drive.content, &mount_path)?;
-    }
+    #[cfg(not(target_os = "windows"))]
+    let memory_fs: Option<MemoryFileSystem> = {
+        // On Linux/macOS, use tmpfs-backed directory
+        std::fs::create_dir_all(&mount_path)?;
+
+        // Extract any saved content to the directory
+        if !drive.content.is_empty() {
+            extract_content_to_mount(&drive.content, &mount_path)?;
+        }
+        None
+    };
 
     // Track the mounted drive
     MOUNTED_DRIVES
@@ -249,6 +506,7 @@ pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> 
             MountedDriveState {
                 drive_id: drive_id.to_string(),
                 mount_path: mount_path.clone(),
+                memory_fs,
             },
         );
 
@@ -257,36 +515,182 @@ pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> 
 
 /// Lock a virtual drive and capture its content
 ///
-/// Captures all files from the drive directory, securely wipes them,
-/// and removes the directory. The captured content is stored in the
-/// VirtualDrive struct for re-encryption.
+/// On Linux/macOS: Captures files from directory, securely wipes, removes directory.
+/// On Windows: Captures from memory, clears memory (no disk cleanup needed).
+///
+/// The captured content is stored in the VirtualDrive struct for re-encryption.
 pub fn lock_drive(drive: &mut VirtualDrive) -> Result<(), VirtualDriveError> {
     let drive_id = &drive.metadata.id;
 
-    let mount_path = MOUNTED_DRIVES
+    let mut drives = MOUNTED_DRIVES
         .lock()
-        .map_err(|_| VirtualDriveError::MountError("failed to acquire lock".to_string()))?
-        .get(drive_id)
-        .map(|s| s.mount_path.clone())
-        .ok_or(VirtualDriveError::NotMounted)?;
+        .map_err(|_| VirtualDriveError::MountError("failed to acquire lock".to_string()))?;
 
-    // Capture content before removing
-    drive.content = capture_mount_content(&mount_path)?;
+    let state = drives.get_mut(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
-    // Securely remove directory contents (overwrites files before deletion)
-    secure_remove_dir_contents(&mount_path)?;
-    
-    // Remove the directory
-    let _ = std::fs::remove_dir(&mount_path);
+    if let Some(ref mut memory_fs) = state.memory_fs {
+        // Windows memory mode: capture from memory
+        drive.content = memory_fs.to_archive();
+        memory_fs.clear();
+    } else {
+        // Linux/macOS disk mode: capture from filesystem
+        let mount_path = state.mount_path.clone();
+        drive.content = capture_mount_content(&mount_path)?;
+        
+        // Securely remove directory contents (overwrites files before deletion)
+        secure_remove_dir_contents(&mount_path)?;
+        
+        // Remove the directory
+        let _ = std::fs::remove_dir(&mount_path);
+    }
 
     // Remove from tracked mounts
-    MOUNTED_DRIVES
-        .lock()
-        .map_err(|_| VirtualDriveError::MountError("failed to acquire lock".to_string()))?
-        .remove(drive_id);
+    drives.remove(drive_id);
 
     Ok(())
 }
+
+// =============================================================================
+// Public API for file operations (works on all platforms, required for Windows)
+// =============================================================================
+
+/// List files in a mounted virtual drive
+///
+/// On Windows (memory mode): Lists from in-memory storage
+/// On Linux/macOS: Lists from the tmpfs directory
+pub fn vdrive_list_files(drive_id: &str, path: &str) -> Result<Vec<String>, VirtualDriveError> {
+    let drives = MOUNTED_DRIVES
+        .lock()
+        .map_err(|_| VirtualDriveError::MountError("failed to acquire lock".to_string()))?;
+
+    let state = drives.get(drive_id).ok_or(VirtualDriveError::NotMounted)?;
+
+    if let Some(ref memory_fs) = state.memory_fs {
+        // Windows memory mode
+        Ok(memory_fs.list_dir(path))
+    } else {
+        // Disk mode: list from filesystem
+        let full_path = state.mount_path.join(path);
+        let mut entries = Vec::new();
+        
+        if full_path.exists() && full_path.is_dir() {
+            for entry in std::fs::read_dir(&full_path)? {
+                let entry = entry?;
+                let name = entry.file_name().to_string_lossy().to_string();
+                if entry.path().is_dir() {
+                    entries.push(format!("{}/", name));
+                } else {
+                    entries.push(name);
+                }
+            }
+        }
+        entries.sort();
+        Ok(entries)
+    }
+}
+
+/// Read a file from a mounted virtual drive
+pub fn vdrive_read_file(drive_id: &str, path: &str) -> Result<Vec<u8>, VirtualDriveError> {
+    let drives = MOUNTED_DRIVES
+        .lock()
+        .map_err(|_| VirtualDriveError::MountError("failed to acquire lock".to_string()))?;
+
+    let state = drives.get(drive_id).ok_or(VirtualDriveError::NotMounted)?;
+
+    if let Some(ref memory_fs) = state.memory_fs {
+        // Windows memory mode
+        memory_fs
+            .read_file(path)
+            .cloned()
+            .ok_or_else(|| VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "file not found",
+            )))
+    } else {
+        // Disk mode
+        let full_path = state.mount_path.join(path);
+        std::fs::read(&full_path).map_err(VirtualDriveError::from)
+    }
+}
+
+/// Write a file to a mounted virtual drive
+pub fn vdrive_write_file(drive_id: &str, path: &str, content: Vec<u8>) -> Result<(), VirtualDriveError> {
+    let mut drives = MOUNTED_DRIVES
+        .lock()
+        .map_err(|_| VirtualDriveError::MountError("failed to acquire lock".to_string()))?;
+
+    let state = drives.get_mut(drive_id).ok_or(VirtualDriveError::NotMounted)?;
+
+    if let Some(ref mut memory_fs) = state.memory_fs {
+        // Windows memory mode
+        memory_fs.write_file(path, content);
+        Ok(())
+    } else {
+        // Disk mode
+        let full_path = state.mount_path.join(path);
+        if let Some(parent) = full_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&full_path, content).map_err(VirtualDriveError::from)
+    }
+}
+
+/// Delete a file from a mounted virtual drive
+pub fn vdrive_delete_file(drive_id: &str, path: &str) -> Result<(), VirtualDriveError> {
+    let mut drives = MOUNTED_DRIVES
+        .lock()
+        .map_err(|_| VirtualDriveError::MountError("failed to acquire lock".to_string()))?;
+
+    let state = drives.get_mut(drive_id).ok_or(VirtualDriveError::NotMounted)?;
+
+    if let Some(ref mut memory_fs) = state.memory_fs {
+        // Windows memory mode
+        if memory_fs.delete_file(path) {
+            Ok(())
+        } else {
+            Err(VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "file not found",
+            )))
+        }
+    } else {
+        // Disk mode
+        let full_path = state.mount_path.join(path);
+        std::fs::remove_file(&full_path).map_err(VirtualDriveError::from)
+    }
+}
+
+/// Create a directory in a mounted virtual drive
+pub fn vdrive_create_dir(drive_id: &str, path: &str) -> Result<(), VirtualDriveError> {
+    let mut drives = MOUNTED_DRIVES
+        .lock()
+        .map_err(|_| VirtualDriveError::MountError("failed to acquire lock".to_string()))?;
+
+    let state = drives.get_mut(drive_id).ok_or(VirtualDriveError::NotMounted)?;
+
+    if let Some(ref mut memory_fs) = state.memory_fs {
+        // Windows memory mode
+        memory_fs.create_dir_all(path);
+        Ok(())
+    } else {
+        // Disk mode
+        let full_path = state.mount_path.join(path);
+        std::fs::create_dir_all(&full_path).map_err(VirtualDriveError::from)
+    }
+}
+
+/// Check if drive is using memory-only mode (Windows)
+pub fn is_memory_mode(drive_id: &str) -> bool {
+    MOUNTED_DRIVES
+        .lock()
+        .ok()
+        .and_then(|drives| drives.get(drive_id).map(|s| s.is_memory_mode()))
+        .unwrap_or(false)
+}
+
+// =============================================================================
+// Internal functions
+// =============================================================================
 
 /// Capture the content of a mounted drive as a tar archive
 fn capture_mount_content(mount_path: &Path) -> Result<Vec<u8>, VirtualDriveError> {
@@ -600,6 +1004,117 @@ mod tests {
             VirtualDriveError::UnsupportedPlatform.to_string(),
             "unsupported platform"
         );
+    }
+
+    // =========================================================================
+    // MemoryFileSystem tests (for Windows memory-only mode)
+    // =========================================================================
+
+    #[test]
+    fn memory_fs_write_and_read_file() {
+        let mut fs = MemoryFileSystem::new();
+        fs.write_file("test.txt", b"Hello World".to_vec());
+        
+        let content = fs.read_file("test.txt").unwrap();
+        assert_eq!(content, b"Hello World");
+    }
+
+    #[test]
+    fn memory_fs_file_not_found() {
+        let fs = MemoryFileSystem::new();
+        assert!(fs.read_file("nonexistent.txt").is_none());
+    }
+
+    #[test]
+    fn memory_fs_delete_file() {
+        let mut fs = MemoryFileSystem::new();
+        fs.write_file("to_delete.txt", b"content".to_vec());
+        assert!(fs.file_exists("to_delete.txt"));
+        
+        assert!(fs.delete_file("to_delete.txt"));
+        assert!(!fs.file_exists("to_delete.txt"));
+    }
+
+    #[test]
+    fn memory_fs_nested_directories() {
+        let mut fs = MemoryFileSystem::new();
+        fs.write_file("a/b/c/deep.txt", b"deep content".to_vec());
+        
+        let content = fs.read_file("a/b/c/deep.txt").unwrap();
+        assert_eq!(content, b"deep content");
+    }
+
+    #[test]
+    fn memory_fs_list_dir() {
+        let mut fs = MemoryFileSystem::new();
+        fs.write_file("file1.txt", b"1".to_vec());
+        fs.write_file("file2.txt", b"2".to_vec());
+        fs.write_file("subdir/file3.txt", b"3".to_vec());
+        
+        let entries = fs.list_dir("");
+        assert!(entries.contains(&"file1.txt".to_string()));
+        assert!(entries.contains(&"file2.txt".to_string()));
+        assert!(entries.contains(&"subdir/".to_string()));
+    }
+
+    #[test]
+    fn memory_fs_list_subdir() {
+        let mut fs = MemoryFileSystem::new();
+        fs.write_file("docs/readme.md", b"readme".to_vec());
+        fs.write_file("docs/guide.md", b"guide".to_vec());
+        fs.write_file("docs/api/reference.md", b"api".to_vec());
+        
+        let entries = fs.list_dir("docs");
+        assert!(entries.contains(&"readme.md".to_string()));
+        assert!(entries.contains(&"guide.md".to_string()));
+        assert!(entries.contains(&"api/".to_string()));
+    }
+
+    #[test]
+    fn memory_fs_archive_roundtrip() {
+        let mut fs = MemoryFileSystem::new();
+        fs.write_file("file1.txt", b"content1".to_vec());
+        fs.write_file("subdir/file2.txt", b"content2".to_vec());
+        fs.create_dir("empty_dir");
+        
+        let archive = fs.to_archive();
+        let restored = MemoryFileSystem::from_archive(&archive);
+        
+        assert_eq!(restored.read_file("file1.txt").unwrap(), b"content1");
+        assert_eq!(restored.read_file("subdir/file2.txt").unwrap(), b"content2");
+    }
+
+    #[test]
+    fn memory_fs_clear() {
+        let mut fs = MemoryFileSystem::new();
+        fs.write_file("secret.txt", b"sensitive".to_vec());
+        fs.write_file("another.txt", b"data".to_vec());
+        
+        fs.clear();
+        
+        assert!(!fs.file_exists("secret.txt"));
+        assert!(!fs.file_exists("another.txt"));
+        assert!(fs.list_all().is_empty());
+    }
+
+    #[test]
+    fn memory_fs_normalizes_windows_paths() {
+        let mut fs = MemoryFileSystem::new();
+        fs.write_file("folder\\subfolder\\file.txt", b"content".to_vec());
+        
+        // Should be accessible with forward slashes
+        let content = fs.read_file("folder/subfolder/file.txt").unwrap();
+        assert_eq!(content, b"content");
+    }
+
+    #[test]
+    fn memory_fs_handles_leading_slash() {
+        let mut fs = MemoryFileSystem::new();
+        fs.write_file("/absolute/path.txt", b"content".to_vec());
+        
+        // Should normalize and be accessible without leading slash
+        let content = fs.read_file("absolute/path.txt").unwrap();
+        assert_eq!(content, b"content");
     }
 }
 
