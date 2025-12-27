@@ -466,13 +466,19 @@ pub fn get_mounted_path(drive_id: &str) -> Option<PathBuf> {
 /// use the `vdrive_*` functions to interact with files.
 pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> {
     let drive_id = &drive.metadata.id;
+    let mount_path = get_mount_path(drive_id);
 
-    // Check if already mounted
-    if is_mounted(drive_id) {
+    // Acquire lock for the entire operation to prevent TOCTOU race conditions.
+    // We must hold the lock while checking mounted state AND performing the mount,
+    // otherwise two concurrent calls could both pass the check and mount the same drive.
+    let mut drives = MOUNTED_DRIVES
+        .lock()
+        .map_err(|_| VirtualDriveError::MountError("failed to acquire lock".to_string()))?;
+
+    // Check if already mounted (while holding the lock)
+    if drives.contains_key(drive_id) {
         return Err(VirtualDriveError::AlreadyMounted);
     }
-
-    let mount_path = get_mount_path(drive_id);
 
     #[cfg(target_os = "windows")]
     let memory_fs = {
@@ -497,18 +503,15 @@ pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> 
         None
     };
 
-    // Track the mounted drive
-    MOUNTED_DRIVES
-        .lock()
-        .map_err(|_| VirtualDriveError::MountError("failed to acquire lock".to_string()))?
-        .insert(
-            drive_id.to_string(),
-            MountedDriveState {
-                drive_id: drive_id.to_string(),
-                mount_path: mount_path.clone(),
-                memory_fs,
-            },
-        );
+    // Track the mounted drive (still holding the lock)
+    drives.insert(
+        drive_id.to_string(),
+        MountedDriveState {
+            drive_id: drive_id.to_string(),
+            mount_path: mount_path.clone(),
+            memory_fs,
+        },
+    );
 
     Ok(mount_path)
 }
