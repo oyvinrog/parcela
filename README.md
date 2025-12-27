@@ -16,7 +16,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/Parcela%20Demo.GIF" alt="Parcela Demo" width="600">
+  <video src="docs/assets/parcela-demo.mp4" width="600" autoplay loop muted playsinline>
+    Your browser doesn't support video. <a href="docs/assets/parcela-demo.mp4">Download the demo</a>.
+  </video>
 </p>
 
 ---
