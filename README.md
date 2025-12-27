@@ -1,5 +1,27 @@
 # Parcela
 
+Parcela is a highly secure encryption vault.
+
+Parcela provides stronger encryption than other encryption tools by splitting the encrypted file into 2-of-3 shares. Any two shares can recover the original file. The files are encrypted with AES-256-GCM. This means that: 
+
+1) If someone steals 2-3 shares, they cannot decrypt the original file. Because they don't have the password.
+2) If someone steals the password, they cannot decrypt the original file. Because they don't have the shares.
+
+Parcela also provides a virtual drive feature. You can create a virtual drive that is a RAM-backed filesystem. You can store files in the virtual drive and it will be encrypted with AES-256-GCM. Any two shares can recover the virtual drive.
+
+![Parcela Architecture](docs/assets/architecture.png)
+
+## Features
+
+- Split a file into 2-of-3 shares. Any two shares can recover the original file.
+- Combine any two shares to recover the original file.
+- Create a virtual drive that is a RAM-backed filesystem.
+- Store files in the virtual drive and it will be encrypted with AES-256-GCM.
+- Any two shares can recover the virtual drive.
+
+
+## Technical details
+
 Parcela is a minimal Rust + Tauri GUI that encrypts a file with AES-256-GCM and splits the encrypted blob into 2-of-3 shares. Any two shares can recover the original file.
 
 ## Build & test
