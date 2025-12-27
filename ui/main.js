@@ -10,6 +10,7 @@ const state = {
   selectedFileIds: new Set(),
   selectedType: "file", // "file" or "drive"
   unlockedDrives: new Map(), // drive_id -> { mount_path }
+  isMemoryMode: false, // true on Windows where virtual drives are memory-only
 };
 
 const shareIndexRegex = /^(.*)\.share([1-3])$/;
@@ -918,6 +919,20 @@ recoverBtn.addEventListener("click", handleRecoverFile);
 unlockDriveBtn.addEventListener("click", handleUnlockDrive);
 lockDriveBtn.addEventListener("click", handleLockDrive);
 openDriveBtn.addEventListener("click", handleOpenDrive);
+
+// Check if we're on a platform that uses memory-only mode (Windows)
+// and hide the "Open in Browser" button if so
+(async function initPlatformSettings() {
+  try {
+    state.isMemoryMode = await invoke("uses_memory_mode");
+    if (state.isMemoryMode) {
+      // On Windows, virtual drives are memory-only; there's no directory to open
+      openDriveBtn.style.display = "none";
+    }
+  } catch (err) {
+    console.warn("Failed to check memory mode:", err);
+  }
+})();
 
 showLoginScreen();
 renderFileList();

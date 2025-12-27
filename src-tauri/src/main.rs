@@ -395,6 +395,13 @@ fn get_unlocked_drives() -> Vec<UnlockedDriveInfo> {
         .unwrap_or_default()
 }
 
+/// Check if the platform uses memory-only mode for virtual drives.
+/// On Windows, virtual drives are kept in memory only (no actual directory on disk).
+#[tauri::command]
+fn uses_memory_mode() -> bool {
+    parcela::uses_memory_mode()
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -417,7 +424,8 @@ fn main() {
             lock_virtual_drive,
             is_drive_unlocked,
             get_drive_mount_path,
-            get_unlocked_drives
+            get_unlocked_drives,
+            uses_memory_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
