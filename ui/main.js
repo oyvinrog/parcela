@@ -437,6 +437,22 @@ function renderDetail() {
     changeBtn.addEventListener("click", () => handleChangeShare(i, isDrive));
     actions.appendChild(changeBtn);
 
+    const browseBtn = document.createElement("button");
+    browseBtn.type = "button";
+    browseBtn.textContent = "Browse";
+    browseBtn.disabled = !entry.shares[i] || !entry.available[i];
+    browseBtn.addEventListener("click", async () => {
+      const sharePath = entry.shares[i];
+      if (!sharePath) return;
+      const dir = getDirName(sharePath) || sharePath;
+      try {
+        await invoke("open_path", { path: dir });
+      } catch (err) {
+        setStatus(`Error: ${err}`, "error");
+      }
+    });
+    actions.appendChild(browseBtn);
+
     const path = document.createElement("div");
     path.className = "path";
     path.textContent = entry.shares[i] || "No location stored";
