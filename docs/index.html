@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Parcela — Split-Key Encryption Vault</title>
+  <meta name="description" content="Military-grade encryption that requires both your password AND physical shares to decrypt. Your files are safe even if your password is stolen.">
+  <meta name="theme-color" content="#0f1419">
+  
+  <!-- Open Graph -->
+  <meta property="og:title" content="Parcela — Split-Key Encryption Vault">
+  <meta property="og:description" content="Your files require both your password and physical possession of shares to decrypt.">
+  <meta property="og:image" content="assets/logo.png">
+  <meta property="og:type" content="website">
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    :root {
+      --bg-primary: #0f1419;
+      --bg-secondary: #161d26;
+      --bg-tertiary: #1c2532;
+      --bg-card: #1a2233;
+      --text-primary: #e7edf4;
+      --text-secondary: #8b98a8;
+      --text-muted: #5c6b7a;
+      --accent-blue: #3b9eff;
+      --accent-cyan: #22d3d3;
+      --accent-gradient: linear-gradient(135deg, #3b9eff 0%, #22d3d3 100%);
+      --border-color: #2a3544;
+      --glow-blue: rgba(59, 158, 255, 0.15);
+      --glow-cyan: rgba(34, 211, 211, 0.15);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* Background pattern */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: 
+        radial-gradient(ellipse 80% 50% at 50% -20%, var(--glow-blue), transparent),
+        radial-gradient(ellipse 60% 40% at 80% 60%, var(--glow-cyan), transparent),
+        radial-gradient(ellipse 50% 30% at 20% 80%, var(--glow-blue), transparent);
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    /* Grid pattern overlay */
+    body::after {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-image: 
+        linear-gradient(var(--border-color) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border-color) 1px, transparent 1px);
+      background-size: 60px 60px;
+      opacity: 0.03;
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    a {
+      color: var(--accent-cyan);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    a:hover {
+      color: var(--accent-blue);
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Navigation */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 16px 0;
+      background: rgba(15, 20, 25, 0.8);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    nav .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 600;
+      font-size: 1.25rem;
+      color: var(--text-primary);
+    }
+
+    .nav-logo img {
+      height: 36px;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 32px;
+      align-items: center;
+    }
+
+    .nav-links a {
+      color: var(--text-secondary);
+      font-weight: 400;
+      font-size: 0.95rem;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text-primary);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-weight: 500;
+      font-size: 0.95rem;
+      transition: all 0.2s;
+      cursor: pointer;
+      border: none;
+    }
+
+    .btn-primary {
+      background: var(--accent-gradient);
+      color: #0f1419;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 30px rgba(59, 158, 255, 0.3);
+      color: #0f1419;
+    }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text-primary);
+      border: 1px solid var(--border-color);
+    }
+
+    .btn-secondary:hover {
+      background: var(--bg-tertiary);
+      border-color: var(--text-muted);
+      color: var(--text-primary);
+    }
+
+    /* Hero Section */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 120px 0 80px;
+      text-align: center;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 100px;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-bottom: 32px;
+    }
+
+    .hero-badge span {
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      font-weight: 500;
+    }
+
+    .hero h1 {
+      font-size: clamp(2.5rem, 8vw, 4.5rem);
+      font-weight: 700;
+      line-height: 1.1;
+      margin-bottom: 24px;
+      letter-spacing: -0.02em;
+    }
+
+    .hero h1 .gradient {
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-subtitle {
+      font-size: clamp(1.1rem, 2.5vw, 1.35rem);
+      color: var(--text-secondary);
+      max-width: 640px;
+      margin: 0 auto 40px;
+      font-weight: 300;
+    }
+
+    .hero-cta {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 64px;
+    }
+
+    .hero-demo {
+      position: relative;
+      max-width: 800px;
+      margin: 0 auto;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid var(--border-color);
+      box-shadow: 
+        0 0 0 1px var(--border-color),
+        0 20px 50px -20px rgba(0, 0, 0, 0.5),
+        0 0 100px -50px var(--glow-blue);
+    }
+
+    .hero-demo img {
+      width: 100%;
+      display: block;
+    }
+
+    /* Security Section */
+    .security {
+      padding: 120px 0;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 64px;
+    }
+
+    .section-label {
+      display: inline-block;
+      font-size: 0.8rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent-cyan);
+      margin-bottom: 16px;
+    }
+
+    .section-header h2 {
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    .section-header p {
+      color: var(--text-secondary);
+      font-size: 1.1rem;
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .comparison-grid {
+      display: grid;
+      gap: 24px;
+      margin-bottom: 64px;
+    }
+
+    .comparison-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 32px;
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 24px;
+    }
+
+    @media (max-width: 768px) {
+      .comparison-card {
+        grid-template-columns: 1fr;
+        text-align: center;
+      }
+    }
+
+    .comparison-scenario {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    @media (max-width: 768px) {
+      .comparison-scenario {
+        justify-content: center;
+      }
+    }
+
+    .comparison-icon {
+      width: 48px;
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      background: var(--bg-tertiary);
+      font-size: 1.5rem;
+    }
+
+    .comparison-text h4 {
+      font-weight: 500;
+      margin-bottom: 4px;
+    }
+
+    .comparison-text p {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+
+    .comparison-result {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      min-width: 140px;
+    }
+
+    .comparison-result .label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .comparison-result .value {
+      font-weight: 500;
+      font-size: 0.95rem;
+    }
+
+    .value.danger { color: #f87171; }
+    .value.success { color: #4ade80; }
+
+    .how-it-works {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 24px;
+      margin-top: 64px;
+    }
+
+    .step-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 32px;
+      position: relative;
+      transition: all 0.3s;
+    }
+
+    .step-card:hover {
+      border-color: var(--accent-blue);
+      transform: translateY(-4px);
+    }
+
+    .step-number {
+      position: absolute;
+      top: -12px;
+      left: 24px;
+      width: 32px;
+      height: 32px;
+      background: var(--accent-gradient);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: #0f1419;
+    }
+
+    .step-card h4 {
+      font-size: 1.1rem;
+      margin-bottom: 8px;
+      margin-top: 8px;
+    }
+
+    .step-card p {
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+    }
+
+    /* Features Section */
+    .features {
+      padding: 120px 0;
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 24px;
+    }
+
+    .feature-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 32px;
+      transition: all 0.3s;
+    }
+
+    .feature-card:hover {
+      border-color: var(--text-muted);
+    }
+
+    .feature-icon {
+      width: 56px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 12px;
+      background: var(--bg-tertiary);
+      margin-bottom: 20px;
+      font-size: 1.5rem;
+    }
+
+    .feature-card h3 {
+      font-size: 1.2rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .feature-card p {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+    }
+
+    /* CLI Section */
+    .cli {
+      padding: 120px 0;
+    }
+
+    .cli-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      align-items: center;
+    }
+
+    @media (max-width: 900px) {
+      .cli-container {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .cli-content h2 {
+      font-size: 2.5rem;
+      margin-bottom: 16px;
+    }
+
+    .cli-content p {
+      color: var(--text-secondary);
+      font-size: 1.1rem;
+      margin-bottom: 32px;
+    }
+
+    .cli-window {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .cli-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .cli-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .cli-dot.red { background: #ff5f57; }
+    .cli-dot.yellow { background: #febc2e; }
+    .cli-dot.green { background: #28c840; }
+
+    .cli-body {
+      padding: 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      line-height: 1.7;
+      overflow-x: auto;
+    }
+
+    .cli-body .comment {
+      color: var(--text-muted);
+    }
+
+    .cli-body .command {
+      color: var(--accent-cyan);
+    }
+
+    .cli-body .flag {
+      color: var(--accent-blue);
+    }
+
+    .cli-body .string {
+      color: #a5d6ff;
+    }
+
+    .cli-body .output {
+      color: var(--text-secondary);
+    }
+
+    /* Use Cases */
+    .use-cases {
+      padding: 120px 0;
+      background: var(--bg-secondary);
+    }
+
+    .use-cases-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+    }
+
+    .use-case {
+      padding: 28px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      transition: all 0.3s;
+    }
+
+    .use-case:hover {
+      transform: translateY(-2px);
+      border-color: var(--text-muted);
+    }
+
+    .use-case-icon {
+      font-size: 2rem;
+      margin-bottom: 16px;
+    }
+
+    .use-case h4 {
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    .use-case p {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+
+    /* CTA Section */
+    .cta {
+      padding: 120px 0;
+      text-align: center;
+    }
+
+    .cta h2 {
+      font-size: clamp(2rem, 5vw, 3rem);
+      margin-bottom: 16px;
+    }
+
+    .cta p {
+      color: var(--text-secondary);
+      font-size: 1.1rem;
+      margin-bottom: 40px;
+    }
+
+    .cta-buttons {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    /* Footer */
+    footer {
+      padding: 40px 0;
+      border-top: 1px solid var(--border-color);
+      text-align: center;
+    }
+
+    footer p {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    footer a {
+      color: var(--text-secondary);
+    }
+
+    /* Animations */
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .hero > * {
+      animation: fadeInUp 0.6s ease-out backwards;
+    }
+
+    .hero > *:nth-child(1) { animation-delay: 0.1s; }
+    .hero > *:nth-child(2) { animation-delay: 0.2s; }
+    .hero > *:nth-child(3) { animation-delay: 0.3s; }
+    .hero > *:nth-child(4) { animation-delay: 0.4s; }
+    .hero > *:nth-child(5) { animation-delay: 0.5s; }
+
+    /* Mobile nav */
+    @media (max-width: 640px) {
+      .nav-links a:not(.btn) {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav>
+    <div class="container">
+      <a href="#" class="nav-logo">
+        <img src="assets/logo.png" alt="Parcela">
+      </a>
+      <div class="nav-links">
+        <a href="#security">Security</a>
+        <a href="#features">Features</a>
+        <a href="#cli">CLI</a>
+        <a href="https://github.com/YOUR_USERNAME/parcela" class="btn btn-secondary">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <section class="hero">
+    <div class="container">
+      <div class="hero-badge">
+        🔐 AES-256-GCM encryption with <span>2-of-3 secret sharing</span>
+      </div>
+      <h1>
+        Split-key encryption<br>
+        for <span class="gradient">maximum security</span>
+      </h1>
+      <p class="hero-subtitle">
+        Your files require <em>both</em> your password <em>and</em> physical possession of shares to decrypt. Even if your password is stolen, your data stays safe.
+      </p>
+      <div class="hero-cta">
+        <a href="https://github.com/YOUR_USERNAME/parcela/releases/latest" class="btn btn-primary">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          Download for Free
+        </a>
+        <a href="https://github.com/YOUR_USERNAME/parcela" class="btn btn-secondary">
+          View on GitHub
+        </a>
+      </div>
+      <div class="hero-demo">
+        <img src="assets/Parcela%20Demo.GIF" alt="Parcela Demo" loading="lazy">
+      </div>
+    </div>
+  </section>
+
+  <!-- Security Section -->
+  <section class="security" id="security">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">Why Parcela?</span>
+        <h2>Traditional encryption has a single point of failure</h2>
+        <p>Steal the password, steal the data. Parcela eliminates this by requiring two factors to decrypt.</p>
+      </div>
+
+      <div class="comparison-grid">
+        <div class="comparison-card">
+          <div class="comparison-scenario">
+            <div class="comparison-icon">🔓</div>
+            <div class="comparison-text">
+              <h4>Attacker steals your password</h4>
+              <p>Through phishing, keylogger, or data breach</p>
+            </div>
+          </div>
+          <div class="comparison-result">
+            <span class="label">Traditional</span>
+            <span class="value danger">❌ Compromised</span>
+          </div>
+          <div class="comparison-result">
+            <span class="label">Parcela</span>
+            <span class="value success">✓ Still safe</span>
+          </div>
+        </div>
+
+        <div class="comparison-card">
+          <div class="comparison-scenario">
+            <div class="comparison-icon">💾</div>
+            <div class="comparison-text">
+              <h4>Attacker steals your files</h4>
+              <p>Laptop stolen or cloud account hacked</p>
+            </div>
+          </div>
+          <div class="comparison-result">
+            <span class="label">Traditional</span>
+            <span class="value danger">❌ Can brute-force</span>
+          </div>
+          <div class="comparison-result">
+            <span class="label">Parcela</span>
+            <span class="value success">✓ Shares useless alone</span>
+          </div>
+        </div>
+
+        <div class="comparison-card">
+          <div class="comparison-scenario">
+            <div class="comparison-icon">📦</div>
+            <div class="comparison-text">
+              <h4>Attacker steals one share</h4>
+              <p>Only has partial data</p>
+            </div>
+          </div>
+          <div class="comparison-result">
+            <span class="label">Traditional</span>
+            <span class="value" style="color: var(--text-muted)">— N/A</span>
+          </div>
+          <div class="comparison-result">
+            <span class="label">Parcela</span>
+            <span class="value success">✓ Needs 2 of 3</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-header" style="margin-top: 80px;">
+        <span class="section-label">How It Works</span>
+        <h2>Four simple steps to unbreakable security</h2>
+      </div>
+
+      <div class="how-it-works">
+        <div class="step-card">
+          <span class="step-number">1</span>
+          <h4>Encrypt</h4>
+          <p>Your file is encrypted with AES-256-GCM using your password</p>
+        </div>
+        <div class="step-card">
+          <span class="step-number">2</span>
+          <h4>Split</h4>
+          <p>The encrypted blob is split into 3 shares (any 2 can reconstruct)</p>
+        </div>
+        <div class="step-card">
+          <span class="step-number">3</span>
+          <h4>Distribute</h4>
+          <p>Store shares in different locations — USB, cloud, safe</p>
+        </div>
+        <div class="step-card">
+          <span class="step-number">4</span>
+          <h4>Recover</h4>
+          <p>Combine any 2 shares + your password to decrypt</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features Section -->
+  <section class="features" id="features">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">Features</span>
+        <h2>Everything you need for secure file storage</h2>
+      </div>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">🔐</div>
+          <h3>2-of-3 Secret Sharing</h3>
+          <p>Split files into 3 shares. Any 2 can recover the original. Lose one? You're still safe.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🛡️</div>
+          <h3>AES-256-GCM</h3>
+          <p>Military-grade authenticated encryption. The same standard used by governments worldwide.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">💾</div>
+          <h3>Virtual Drive</h3>
+          <p>RAM-backed encrypted filesystem. Work with sensitive files that never touch your disk.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🖥️</div>
+          <h3>Cross-Platform</h3>
+          <p>Native desktop app for Windows, macOS, and Linux. Built with Rust + Tauri.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">⌨️</div>
+          <h3>CLI Support</h3>
+          <p>Full command-line interface for automation, scripting, and power users.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">🔓</div>
+          <h3>Open Source</h3>
+          <p>Fully auditable code. Trust, but verify. Your security shouldn't rely on obscurity.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLI Section -->
+  <section class="cli" id="cli">
+    <div class="container">
+      <div class="cli-container">
+        <div class="cli-content">
+          <span class="section-label">For Power Users</span>
+          <h2>Full CLI support</h2>
+          <p>Automate your encryption workflows with the command-line interface. Perfect for scripts, backups, and CI/CD pipelines.</p>
+          <a href="https://github.com/YOUR_USERNAME/parcela#cli-usage" class="btn btn-secondary">View Documentation</a>
+        </div>
+        <div class="cli-window">
+          <div class="cli-header">
+            <span class="cli-dot red"></span>
+            <span class="cli-dot yellow"></span>
+            <span class="cli-dot green"></span>
+          </div>
+          <div class="cli-body">
+            <div><span class="comment"># Split a file into shares</span></div>
+            <div><span class="command">parcela</span> split \</div>
+            <div>&nbsp;&nbsp;<span class="flag">--input</span> <span class="string">/path/to/secret.txt</span> \</div>
+            <div>&nbsp;&nbsp;<span class="flag">--out-dir</span> <span class="string">/path/to/shares</span> \</div>
+            <div>&nbsp;&nbsp;<span class="flag">--password</span> <span class="string">"your-passphrase"</span></div>
+            <br>
+            <div><span class="output">✓ Created secret.txt.share1</span></div>
+            <div><span class="output">✓ Created secret.txt.share2</span></div>
+            <div><span class="output">✓ Created secret.txt.share3</span></div>
+            <br>
+            <div><span class="comment"># Recover from any 2 shares</span></div>
+            <div><span class="command">parcela</span> combine \</div>
+            <div>&nbsp;&nbsp;<span class="flag">--shares</span> <span class="string">share1 share3</span> \</div>
+            <div>&nbsp;&nbsp;<span class="flag">--output</span> <span class="string">/path/to/recovered.txt</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Use Cases -->
+  <section class="use-cases">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">Use Cases</span>
+        <h2>Built for serious security needs</h2>
+      </div>
+
+      <div class="use-cases-grid">
+        <div class="use-case">
+          <div class="use-case-icon">🏦</div>
+          <h4>Estate Planning</h4>
+          <p>Split crypto wallet keys between family members. No single person can access alone.</p>
+        </div>
+        <div class="use-case">
+          <div class="use-case-icon">🔑</div>
+          <h4>Password Backup</h4>
+          <p>Store master passwords with geographic redundancy across multiple locations.</p>
+        </div>
+        <div class="use-case">
+          <div class="use-case-icon">📁</div>
+          <h4>Sensitive Documents</h4>
+          <p>Legal, medical, or financial records that need the highest level of protection.</p>
+        </div>
+        <div class="use-case">
+          <div class="use-case-icon">🏢</div>
+          <h4>Corporate Secrets</h4>
+          <p>Require multiple executives to decrypt. No single point of compromise.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA Section -->
+  <section class="cta">
+    <div class="container">
+      <h2>Ready to secure your files?</h2>
+      <p>Download Parcela for free. Open source, no accounts required.</p>
+      <div class="cta-buttons">
+        <a href="https://github.com/YOUR_USERNAME/parcela/releases/latest" class="btn btn-primary">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          Download Now
+        </a>
+        <a href="https://github.com/YOUR_USERNAME/parcela" class="btn btn-secondary">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+          Star on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer>
+    <div class="container">
+      <p>
+        Built with 🦀 Rust + Tauri — 
+        <a href="https://github.com/YOUR_USERNAME/parcela">Source Code</a> — 
+        <a href="https://github.com/YOUR_USERNAME/parcela/blob/main/LICENSE">MIT License</a>
+      </p>
+    </div>
+  </footer>
+
+</body>
+</html>
+
