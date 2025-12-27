@@ -23,6 +23,14 @@ Parcela also provides a virtual drive feature inside the vault. You can create a
   <img src="docs/assets/architecture.png" alt="Parcela Architecture" width="600">
 </p>
 
+## Demo
+
+<p align="center">
+  <img src="docs/assets/Parcela%20Demo.GIF" alt="Parcela Demo" width="600">
+</p>
+
+📹 [Watch full demo video](docs/assets/Parcela%20Demo.mp4)
+
 ## Features
 
 - Split a file into 2-of-3 shares. Any two shares can recover the original file.
