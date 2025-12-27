@@ -313,22 +313,47 @@ fn lock_virtual_drive(
         .ok_or("drive is not unlocked")?;
 
     // Lock the drive (captures content)
-    parcela::lock_drive(&mut state.drive).map_err(|e| e.to_string())?;
-
-    // Re-encode and encrypt
-    let encoded = state.drive.encode().map_err(|e| e.to_string())?;
-    let encrypted = parcela::encrypt(&encoded, &password).map_err(|e| e.to_string())?;
-
-    // Re-split into shares
-    let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
-
-    // Save to the existing share locations
-    for share in shares.iter() {
-        let idx = (share.index - 1) as usize;
-        if let Some(path) = &share_paths[idx] {
-            let data = parcela::encode_share(share);
-            std::fs::write(path, data).map_err(|e| e.to_string())?;
+    // If this fails, re-insert the state to avoid orphaning the drive
+    if let Err(e) = parcela::lock_drive(&mut state.drive) {
+        // Re-insert the state so user can retry
+        if let Ok(mut drives) = UNLOCKED_DRIVES.lock() {
+            drives.insert(drive_id, state);
         }
+        return Err(e.to_string());
+    }
+
+    // Re-encode, encrypt, and save shares
+    // If any of these fail, preserve the state so user can retry saving
+    let save_result = (|| -> Result<(), String> {
+        let encoded = state.drive.encode().map_err(|e| e.to_string())?;
+        let encrypted = parcela::encrypt(&encoded, &password).map_err(|e| e.to_string())?;
+
+        // Re-split into shares
+        let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
+
+        // Save to the existing share locations
+        for share in shares.iter() {
+            let idx = (share.index - 1) as usize;
+            if let Some(path) = &share_paths[idx] {
+                let data = parcela::encode_share(share);
+                std::fs::write(path, data).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    })();
+
+    if let Err(e) = save_result {
+        // Drive is locked (removed from MOUNTED_DRIVES) but content is captured.
+        // Keep it in UNLOCKED_DRIVES so user can retry saving.
+        // Clear mount path since it's no longer mounted.
+        state.mount_path = String::new();
+        if let Ok(mut drives) = UNLOCKED_DRIVES.lock() {
+            drives.insert(drive_id, state);
+        }
+        return Err(format!(
+            "drive locked but failed to save shares: {}. Content preserved for retry.",
+            e
+        ));
     }
 
     Ok(())
