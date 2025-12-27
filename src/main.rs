@@ -94,6 +94,7 @@ fn combine_cmd(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use parcela::virtual_drive::VirtualDrive;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -145,5 +146,131 @@ mod tests {
             err.to_string().contains("need at least two shares"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn virtual_drive_encrypt_split_combine_roundtrip() {
+        // Create a virtual drive
+        let drive = VirtualDrive::new_with_id(
+            "test-drive-001".to_string(),
+            "Test Drive".to_string(),
+            32,
+        );
+
+        // Encode the drive
+        let encoded = drive.encode().expect("encode");
+
+        // Encrypt the encoded drive
+        let password = "secure_password";
+        let encrypted = parcela::encrypt(&encoded, password).expect("encrypt");
+
+        // Split into shares
+        let shares = parcela::split_shares(&encrypted).expect("split");
+        assert_eq!(shares.len(), 3);
+
+        // Combine any two shares
+        let combined = parcela::combine_shares(&[shares[0].clone(), shares[2].clone()])
+            .expect("combine");
+
+        // Decrypt
+        let decrypted = parcela::decrypt(&combined, password).expect("decrypt");
+
+        // Decode and verify
+        let recovered_drive = VirtualDrive::decode(&decrypted).expect("decode");
+        assert_eq!(recovered_drive.metadata.id, "test-drive-001");
+        assert_eq!(recovered_drive.metadata.name, "Test Drive");
+        assert_eq!(recovered_drive.metadata.size_mb, 32);
+    }
+
+    #[test]
+    fn virtual_drive_with_content_roundtrip() {
+        // Create a virtual drive with content
+        let mut drive = VirtualDrive::new_with_id(
+            "content-drive".to_string(),
+            "Content Test".to_string(),
+            16,
+        );
+        drive.content = b"simulated filesystem data".to_vec();
+
+        // Full encrypt-split-combine-decrypt cycle
+        let password = "test123";
+        let encoded = drive.encode().expect("encode");
+        let encrypted = parcela::encrypt(&encoded, password).expect("encrypt");
+        let shares = parcela::split_shares(&encrypted).expect("split");
+
+        // Use shares 1 and 2 this time
+        let combined = parcela::combine_shares(&[shares[0].clone(), shares[1].clone()])
+            .expect("combine");
+        let decrypted = parcela::decrypt(&combined, password).expect("decrypt");
+        let recovered = VirtualDrive::decode(&decrypted).expect("decode");
+
+        assert_eq!(recovered.content, b"simulated filesystem data");
+    }
+
+    #[test]
+    fn virtual_drive_shares_saved_to_files() {
+        let dir = temp_dir("vdrive-shares");
+
+        // Create and encode a virtual drive
+        let drive = VirtualDrive::new_with_id(
+            "file-test".to_string(),
+            "File Test Drive".to_string(),
+            8,
+        );
+        let encoded = drive.encode().expect("encode");
+        let encrypted = parcela::encrypt(&encoded, "pass").expect("encrypt");
+        let shares = parcela::split_shares(&encrypted).expect("split");
+
+        // Save shares to files
+        let base_name = "test.vdrive";
+        let mut share_paths = Vec::new();
+        for share in shares.iter() {
+            let filename = format!("{}.share{}", base_name, share.index);
+            let path = dir.join(&filename);
+            let data = parcela::encode_share(share);
+            fs::write(&path, data).expect("write share");
+            share_paths.push(path);
+        }
+
+        // Read shares back from files
+        let data1 = fs::read(&share_paths[0]).expect("read share1");
+        let data2 = fs::read(&share_paths[2]).expect("read share3");
+        let s1 = parcela::decode_share(&data1).expect("decode share1");
+        let s2 = parcela::decode_share(&data2).expect("decode share3");
+
+        // Combine and decrypt
+        let combined = parcela::combine_shares(&[s1, s2]).expect("combine");
+        let decrypted = parcela::decrypt(&combined, "pass").expect("decrypt");
+        let recovered = VirtualDrive::decode(&decrypted).expect("decode");
+
+        assert_eq!(recovered.metadata.id, "file-test");
+        assert_eq!(recovered.metadata.name, "File Test Drive");
+    }
+
+    #[test]
+    fn virtual_drive_wrong_password_fails() {
+        let drive = VirtualDrive::new("Secure Drive".to_string(), 64);
+        let encoded = drive.encode().expect("encode");
+        let encrypted = parcela::encrypt(&encoded, "correct").expect("encrypt");
+        let shares = parcela::split_shares(&encrypted).expect("split");
+
+        let combined = parcela::combine_shares(&[shares[0].clone(), shares[1].clone()])
+            .expect("combine");
+
+        let result = parcela::decrypt(&combined, "wrong");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn virtual_drive_single_share_fails() {
+        let drive = VirtualDrive::new("Single Share Test".to_string(), 16);
+        let encoded = drive.encode().expect("encode");
+        let encrypted = parcela::encrypt(&encoded, "pass").expect("encrypt");
+        let shares = parcela::split_shares(&encrypted).expect("split");
+
+        // Trying to combine with just one share should fail
+        let result = parcela::combine_shares(&[shares[0].clone()]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("at least two shares"));
     }
 }

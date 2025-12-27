@@ -58,6 +58,7 @@
             </div>
             <div class="vault-actions">
               <button id="add-file" class="primary">Split &amp; Add File</button>
+              <button id="add-virtual-drive">Create Virtual Drive</button>
               <button id="refresh-status">Refresh status</button>
             </div>
             <div class="selection-controls">
@@ -94,8 +95,19 @@
 
               <div class="share-list" id="share-list"></div>
 
-              <div class="detail-actions">
+              <div class="detail-actions" id="file-actions">
                 <button id="recover-file" class="primary">Recover file</button>
+              </div>
+
+              <div class="detail-actions hidden" id="drive-actions">
+                <button id="unlock-drive" class="primary">Unlock Drive</button>
+                <button id="lock-drive" class="primary">Lock Drive</button>
+                <button id="open-drive">Open in Browser</button>
+              </div>
+
+              <div class="drive-status hidden" id="drive-status">
+                <div class="drive-status-label">Mount Path:</div>
+                <div class="drive-status-path" id="drive-mount-path"></div>
               </div>
 
               <div class="result" id="detail-result"></div>

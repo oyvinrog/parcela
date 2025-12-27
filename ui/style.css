@@ -237,6 +237,30 @@ body::before {
   box-shadow: 0 6px 20px rgba(228, 106, 46, 0.15);
 }
 
+.file-item.drive-item {
+  background: linear-gradient(135deg, #fff 0%, #f0f8ff 100%);
+  border-left: 3px solid #5a9fd4;
+}
+
+.file-item.drive-item.unlocked {
+  border-left-color: var(--green);
+  background: linear-gradient(135deg, #fff 0%, #f0fff4 100%);
+}
+
+.drive-icon {
+  font-size: 16px;
+  margin-right: 4px;
+}
+
+.size-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: rgba(90, 159, 212, 0.15);
+  color: #5a9fd4;
+  border-radius: 4px;
+  margin-left: 8px;
+}
+
 .file-title {
   font-weight: 600;
   font-size: 14px;
@@ -432,6 +456,28 @@ input {
 .detail-actions {
   display: flex;
   gap: 12px;
+}
+
+.drive-status {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+  border: 1px solid rgba(59, 178, 115, 0.3);
+}
+
+.drive-status-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: #1d6b44;
+  margin-bottom: 4px;
+}
+
+.drive-status-path {
+  font-family: "Fira Code", "Consolas", monospace;
+  font-size: 13px;
+  color: var(--ink);
+  word-break: break-all;
 }
 
 .result {
