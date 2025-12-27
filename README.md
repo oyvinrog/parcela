@@ -1,15 +1,27 @@
+<p align="center">
+  <img src="docs/assets/logo.png" alt="Parcela Logo" width="200">
+</p>
+
 # Parcela
+
 
 Parcela is a highly secure encryption vault.
 
-Parcela provides stronger encryption than other encryption tools by splitting the encrypted file into 2-of-3 shares. Any two shares can recover the original file. The files are encrypted with AES-256-GCM. This means that: 
+Parcela provides stronger encryption than other encryption tools by splitting the encrypted file into 2-of-3 shares. Any two shares plus the password can recover the original file. The files are encrypted with AES-256-GCM. This means that: 
 
 1) If someone steals 2-3 shares, they cannot decrypt the original file. Because they don't have the password.
 2) If someone steals the password, they cannot decrypt the original file. Because they don't have the shares.
 
-Parcela also provides a virtual drive feature. You can create a virtual drive that is a RAM-backed filesystem. You can store files in the virtual drive and it will be encrypted with AES-256-GCM. Any two shares can recover the virtual drive.
+Parcela also provides a virtual drive feature inside the vault. You can create a virtual drive that is a RAM-backed filesystem. You can store files in the virtual drive and it will be encrypted with AES-256-GCM. Any two shares plus the password can recover the virtual drive.
 
-![Parcela Architecture](docs/assets/architecture.png)
+
+<p align="center">
+  <img src="docs/assets/explanation.png" alt="Parcela Vault" width="600">
+</p>
+
+<p align="center">
+  <img src="docs/assets/architecture.png" alt="Parcela Architecture" width="600">
+</p>
 
 ## Features
 
