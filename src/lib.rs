@@ -3,6 +3,14 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
+pub mod virtual_drive;
+
+pub use virtual_drive::{
+    VirtualDrive, VirtualDriveError, VirtualDriveMetadata,
+    get_mount_path, get_mounted_path, is_mounted, lock_drive, unlock_drive,
+    MAGIC_VDRIVE, DEFAULT_DRIVE_SIZE_MB,
+};
+
 pub const MAGIC_BLOB: &[u8; 8] = b"PARCELA1";
 pub const MAGIC_SHARE: &[u8; 8] = b"PSHARE01";
 pub const SHARE_TOTAL: u8 = 3;
