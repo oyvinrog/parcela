@@ -536,6 +536,204 @@ input {
   }
 }
 
+/* =============================================================================
+   File Browser for Virtual Drives
+   ============================================================================= */
+
+.file-browser {
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  background: linear-gradient(135deg, #fafcff 0%, #f8f6f2 100%);
+  overflow: hidden;
+}
+
+.file-browser-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #e3ecf5 0%, #e8e4dc 100%);
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.file-browser-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.file-browser-icon {
+  font-size: 18px;
+}
+
+.file-browser-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.fb-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-border);
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.fb-btn:hover {
+  background: var(--panel-strong);
+  transform: translateY(-1px);
+}
+
+.fb-btn.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+
+.fb-btn.primary:hover {
+  background: var(--accent-dark);
+}
+
+.fb-btn.danger {
+  background: #fff;
+  color: #c53030;
+  border-color: rgba(197, 48, 48, 0.3);
+}
+
+.fb-btn.danger:hover {
+  background: #fff5f5;
+  border-color: #c53030;
+}
+
+.fb-btn span:first-child {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.file-browser-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 16px;
+  background: rgba(255, 255, 255, 0.6);
+  border-bottom: 1px solid var(--panel-border);
+  flex-wrap: wrap;
+}
+
+.breadcrumb-item {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.breadcrumb-item:hover {
+  background: var(--panel-strong);
+  color: var(--ink);
+}
+
+.breadcrumb-item.active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.breadcrumb-sep {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.file-browser-list {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.fb-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 40px 20px;
+  font-size: 13px;
+}
+
+.fb-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+}
+
+.fb-entry:hover {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: var(--panel-border);
+}
+
+.fb-entry.selected {
+  background: rgba(228, 106, 46, 0.1);
+  border-color: rgba(228, 106, 46, 0.4);
+}
+
+.fb-entry.folder {
+  font-weight: 500;
+}
+
+.fb-entry-icon {
+  font-size: 20px;
+  width: 28px;
+  text-align: center;
+}
+
+.fb-entry-name {
+  flex: 1;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fb-entry-meta {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.file-browser-selection {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #fff8f1 0%, #f6ecdf 100%);
+  border-top: 1px solid var(--panel-border);
+}
+
+#fb-selected-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fb-selection-actions {
+  display: flex;
+  gap: 8px;
+}
+
 @media (max-width: 900px) {
   .vault-screen {
     grid-template-columns: 1fr;
@@ -551,6 +749,18 @@ input {
 
   .topbar {
     flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .file-browser-header {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .file-browser-selection {
+    flex-direction: column;
+    gap: 10px;
     align-items: flex-start;
   }
 }

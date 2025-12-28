@@ -110,6 +110,44 @@
                 <div class="drive-status-path" id="drive-mount-path"></div>
               </div>
 
+              <!-- File Browser for unlocked virtual drives -->
+              <div class="file-browser hidden" id="file-browser">
+                <div class="file-browser-header">
+                  <div class="file-browser-title">
+                    <span class="file-browser-icon">📂</span>
+                    <span>Drive Contents</span>
+                  </div>
+                  <div class="file-browser-actions">
+                    <button id="fb-upload" class="fb-btn" title="Import file from disk">
+                      <span>↑</span> Import
+                    </button>
+                    <button id="fb-new-folder" class="fb-btn" title="Create new folder">
+                      <span>+</span> New Folder
+                    </button>
+                  </div>
+                </div>
+                
+                <div class="file-browser-breadcrumb" id="fb-breadcrumb">
+                  <button class="breadcrumb-item" data-path="">🏠 Root</button>
+                </div>
+                
+                <div class="file-browser-list" id="fb-list">
+                  <div class="fb-empty">Drive is empty. Import files to get started.</div>
+                </div>
+                
+                <div class="file-browser-selection hidden" id="fb-selection">
+                  <span id="fb-selected-name"></span>
+                  <div class="fb-selection-actions">
+                    <button id="fb-download" class="fb-btn primary" title="Export to disk">
+                      <span>↓</span> Export
+                    </button>
+                    <button id="fb-delete" class="fb-btn danger" title="Delete">
+                      <span>×</span> Delete
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div class="result" id="detail-result"></div>
             </div>
           </section>

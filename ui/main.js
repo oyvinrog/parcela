@@ -11,6 +11,12 @@ const state = {
   selectedType: "file", // "file" or "drive"
   unlockedDrives: new Map(), // drive_id -> { mount_path }
   isMemoryMode: false, // true on Windows where virtual drives are memory-only
+  // File browser state
+  fileBrowser: {
+    currentPath: "",
+    selectedEntry: null, // { name, isDir }
+    entries: [],
+  },
 };
 
 const shareIndexRegex = /^(.*)\.share([1-3])$/;
@@ -43,6 +49,17 @@ const driveMountPathEl = document.getElementById("drive-mount-path");
 const unlockDriveBtn = document.getElementById("unlock-drive");
 const lockDriveBtn = document.getElementById("lock-drive");
 const openDriveBtn = document.getElementById("open-drive");
+
+// File browser elements
+const fileBrowserEl = document.getElementById("file-browser");
+const fbBreadcrumbEl = document.getElementById("fb-breadcrumb");
+const fbListEl = document.getElementById("fb-list");
+const fbSelectionEl = document.getElementById("fb-selection");
+const fbSelectedNameEl = document.getElementById("fb-selected-name");
+const fbUploadBtn = document.getElementById("fb-upload");
+const fbNewFolderBtn = document.getElementById("fb-new-folder");
+const fbDownloadBtn = document.getElementById("fb-download");
+const fbDeleteBtn = document.getElementById("fb-delete");
 
 let pendingOpenPath = "";
 let pendingSavePath = "";
@@ -302,6 +319,11 @@ function renderFileList() {
     item.appendChild(meta);
 
     item.addEventListener("click", () => {
+      // Reset file browser when switching drives
+      if (state.selectedFileId !== drive.id) {
+        state.fileBrowser.currentPath = "";
+        state.fileBrowser.selectedEntry = null;
+      }
       state.selectedFileId = drive.id;
       state.selectedType = "drive";
       renderDetail();
@@ -477,13 +499,17 @@ function renderDetail() {
     if (isUnlocked) {
       driveStatusEl.classList.remove("hidden");
       driveMountPathEl.textContent = getDriveMountPath(entry.id) || "Unknown";
+      // Show file browser for unlocked drives
+      loadFileBrowser(entry.id, state.fileBrowser.currentPath || "");
     } else {
       driveStatusEl.classList.add("hidden");
+      hideFileBrowser();
     }
   } else {
     fileActionsEl.classList.remove("hidden");
     driveActionsEl.classList.add("hidden");
     driveStatusEl.classList.add("hidden");
+    hideFileBrowser();
     recoverBtn.disabled = availableCount < 2;
   }
 }
@@ -830,6 +856,278 @@ async function handleOpenDrive() {
   }
 }
 
+// =============================================================================
+// File Browser Functions (for virtual drives)
+// =============================================================================
+
+function getSelectedDriveId() {
+  if (state.selectedType !== "drive") return null;
+  return state.selectedFileId;
+}
+
+function showFileBrowser() {
+  fileBrowserEl.classList.remove("hidden");
+}
+
+function hideFileBrowser() {
+  fileBrowserEl.classList.add("hidden");
+  state.fileBrowser.currentPath = "";
+  state.fileBrowser.selectedEntry = null;
+  state.fileBrowser.entries = [];
+}
+
+async function loadFileBrowser(driveId, path = "") {
+  state.fileBrowser.currentPath = path;
+  state.fileBrowser.selectedEntry = null;
+  
+  try {
+    const entries = await invoke("vdrive_list_files", { driveId, path });
+    state.fileBrowser.entries = entries;
+    renderFileBrowser();
+  } catch (err) {
+    console.error("Failed to load file browser:", err);
+    state.fileBrowser.entries = [];
+    renderFileBrowser();
+  }
+}
+
+function renderFileBrowser() {
+  const driveId = getSelectedDriveId();
+  if (!driveId || !isDriveUnlocked(driveId)) {
+    hideFileBrowser();
+    return;
+  }
+
+  showFileBrowser();
+  renderBreadcrumb();
+  renderFileList_FB();
+  renderSelection();
+}
+
+function renderBreadcrumb() {
+  fbBreadcrumbEl.innerHTML = "";
+  
+  const parts = state.fileBrowser.currentPath
+    ? state.fileBrowser.currentPath.split("/").filter(Boolean)
+    : [];
+  
+  // Root button
+  const rootBtn = document.createElement("button");
+  rootBtn.className = "breadcrumb-item" + (parts.length === 0 ? " active" : "");
+  rootBtn.textContent = "🏠 Root";
+  rootBtn.dataset.path = "";
+  rootBtn.addEventListener("click", () => navigateTo(""));
+  fbBreadcrumbEl.appendChild(rootBtn);
+  
+  // Path segments
+  let accumulated = "";
+  for (let i = 0; i < parts.length; i++) {
+    const sep = document.createElement("span");
+    sep.className = "breadcrumb-sep";
+    sep.textContent = "›";
+    fbBreadcrumbEl.appendChild(sep);
+    
+    accumulated += (accumulated ? "/" : "") + parts[i];
+    const btn = document.createElement("button");
+    btn.className = "breadcrumb-item" + (i === parts.length - 1 ? " active" : "");
+    btn.textContent = parts[i];
+    btn.dataset.path = accumulated;
+    const pathCopy = accumulated;
+    btn.addEventListener("click", () => navigateTo(pathCopy));
+    fbBreadcrumbEl.appendChild(btn);
+  }
+}
+
+function renderFileList_FB() {
+  fbListEl.innerHTML = "";
+  
+  const entries = state.fileBrowser.entries || [];
+  
+  if (entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "fb-empty";
+    empty.textContent = "This folder is empty. Import files to get started.";
+    fbListEl.appendChild(empty);
+    return;
+  }
+  
+  // Sort: folders first, then files, alphabetically
+  const sorted = [...entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  
+  for (const entry of sorted) {
+    const el = document.createElement("div");
+    el.className = "fb-entry" + (entry.is_dir ? " folder" : "");
+    
+    if (
+      state.fileBrowser.selectedEntry &&
+      state.fileBrowser.selectedEntry.name === entry.name
+    ) {
+      el.classList.add("selected");
+    }
+    
+    const icon = document.createElement("span");
+    icon.className = "fb-entry-icon";
+    icon.textContent = entry.is_dir ? "📁" : getFileIcon(entry.name);
+    
+    const name = document.createElement("span");
+    name.className = "fb-entry-name";
+    name.textContent = entry.name;
+    
+    el.appendChild(icon);
+    el.appendChild(name);
+    
+    el.addEventListener("click", () => handleEntryClick(entry));
+    el.addEventListener("dblclick", () => handleEntryDoubleClick(entry));
+    
+    fbListEl.appendChild(el);
+  }
+}
+
+function getFileIcon(filename) {
+  const ext = filename.split(".").pop()?.toLowerCase() || "";
+  const iconMap = {
+    txt: "📄",
+    md: "📝",
+    pdf: "📕",
+    doc: "📘",
+    docx: "📘",
+    xls: "📗",
+    xlsx: "📗",
+    png: "🖼️",
+    jpg: "🖼️",
+    jpeg: "🖼️",
+    gif: "🖼️",
+    svg: "🖼️",
+    mp3: "🎵",
+    wav: "🎵",
+    mp4: "🎬",
+    mov: "🎬",
+    zip: "📦",
+    rar: "📦",
+    "7z": "📦",
+    json: "📋",
+    xml: "📋",
+    html: "🌐",
+    css: "🎨",
+    js: "⚡",
+    ts: "⚡",
+    py: "🐍",
+    rs: "🦀",
+    key: "🔑",
+    pem: "🔐",
+  };
+  return iconMap[ext] || "📄";
+}
+
+function renderSelection() {
+  const sel = state.fileBrowser.selectedEntry;
+  if (!sel || sel.is_dir) {
+    fbSelectionEl.classList.add("hidden");
+    return;
+  }
+  
+  fbSelectionEl.classList.remove("hidden");
+  fbSelectedNameEl.textContent = sel.name;
+}
+
+function handleEntryClick(entry) {
+  state.fileBrowser.selectedEntry = entry;
+  renderFileList_FB();
+  renderSelection();
+}
+
+function handleEntryDoubleClick(entry) {
+  if (entry.is_dir) {
+    navigateTo(joinPath(state.fileBrowser.currentPath, entry.name));
+  }
+}
+
+function navigateTo(path) {
+  const driveId = getSelectedDriveId();
+  if (!driveId) return;
+  loadFileBrowser(driveId, path);
+}
+
+async function handleFBUpload() {
+  const driveId = getSelectedDriveId();
+  if (!driveId) return;
+  
+  try {
+    setStatus("Importing file...");
+    const importedPath = await invoke("vdrive_import_file", {
+      driveId,
+      destPath: state.fileBrowser.currentPath,
+    });
+    await loadFileBrowser(driveId, state.fileBrowser.currentPath);
+    setStatus(`Imported: ${importedPath}`, "success");
+  } catch (err) {
+    if (err !== "No file selected") {
+      setStatus(`Error: ${err}`, "error");
+    }
+  }
+}
+
+async function handleFBNewFolder() {
+  const driveId = getSelectedDriveId();
+  if (!driveId) return;
+  
+  const name = prompt("Enter folder name:");
+  if (!name || name.trim() === "") return;
+  
+  const folderPath = joinPath(state.fileBrowser.currentPath, name.trim());
+  
+  try {
+    setStatus("Creating folder...");
+    await invoke("vdrive_create_dir", { driveId, path: folderPath });
+    await loadFileBrowser(driveId, state.fileBrowser.currentPath);
+    setStatus(`Created folder: ${name}`, "success");
+  } catch (err) {
+    setStatus(`Error: ${err}`, "error");
+  }
+}
+
+async function handleFBDownload() {
+  const driveId = getSelectedDriveId();
+  const sel = state.fileBrowser.selectedEntry;
+  if (!driveId || !sel || sel.is_dir) return;
+  
+  const filePath = joinPath(state.fileBrowser.currentPath, sel.name);
+  
+  try {
+    setStatus("Exporting file...");
+    const savedPath = await invoke("vdrive_export_file", { driveId, path: filePath });
+    setStatus(`Exported to: ${savedPath}`, "success");
+  } catch (err) {
+    if (err !== "No save location selected") {
+      setStatus(`Error: ${err}`, "error");
+    }
+  }
+}
+
+async function handleFBDelete() {
+  const driveId = getSelectedDriveId();
+  const sel = state.fileBrowser.selectedEntry;
+  if (!driveId || !sel) return;
+  
+  const filePath = joinPath(state.fileBrowser.currentPath, sel.name);
+  const typeLabel = sel.is_dir ? "folder" : "file";
+  
+  if (!confirm(`Delete ${typeLabel} "${sel.name}"?`)) return;
+  
+  try {
+    setStatus(`Deleting ${typeLabel}...`);
+    await invoke("vdrive_delete_file", { driveId, path: filePath });
+    state.fileBrowser.selectedEntry = null;
+    await loadFileBrowser(driveId, state.fileBrowser.currentPath);
+    setStatus(`Deleted: ${sel.name}`, "success");
+  } catch (err) {
+    setStatus(`Error: ${err}`, "error");
+  }
+}
+
 async function handleRecoverSelected() {
   setResultText("");
   const selectedFiles = state.vault.files.filter((entry) =>
@@ -919,6 +1217,12 @@ recoverBtn.addEventListener("click", handleRecoverFile);
 unlockDriveBtn.addEventListener("click", handleUnlockDrive);
 lockDriveBtn.addEventListener("click", handleLockDrive);
 openDriveBtn.addEventListener("click", handleOpenDrive);
+
+// File browser event listeners
+fbUploadBtn.addEventListener("click", handleFBUpload);
+fbNewFolderBtn.addEventListener("click", handleFBNewFolder);
+fbDownloadBtn.addEventListener("click", handleFBDownload);
+fbDeleteBtn.addEventListener("click", handleFBDelete);
 
 // Check if we're on a platform that uses memory-only mode (Windows)
 // and hide the "Open in Browser" button if so

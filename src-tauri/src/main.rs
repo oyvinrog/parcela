@@ -402,6 +402,116 @@ fn uses_memory_mode() -> bool {
     parcela::uses_memory_mode()
 }
 
+// =============================================================================
+// Virtual Drive File Browser Commands (for Windows memory-only mode)
+// =============================================================================
+
+/// File entry info for the file browser
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct FileEntry {
+    name: String,
+    is_dir: bool,
+    size: Option<usize>,
+}
+
+/// List files in a virtual drive directory
+#[tauri::command]
+fn vdrive_list_files(drive_id: String, path: String) -> Result<Vec<FileEntry>, String> {
+    let entries = parcela::vdrive_list_files(&drive_id, &path).map_err(|e| e.to_string())?;
+    
+    Ok(entries
+        .into_iter()
+        .map(|name| {
+            let is_dir = name.ends_with('/');
+            let clean_name = if is_dir {
+                name.trim_end_matches('/').to_string()
+            } else {
+                name
+            };
+            FileEntry {
+                name: clean_name,
+                is_dir,
+                size: None,
+            }
+        })
+        .collect())
+}
+
+/// Read a file from a virtual drive
+#[tauri::command]
+fn vdrive_read_file(drive_id: String, path: String) -> Result<Vec<u8>, String> {
+    parcela::vdrive_read_file(&drive_id, &path).map_err(|e| e.to_string())
+}
+
+/// Write a file to a virtual drive
+#[tauri::command]
+fn vdrive_write_file(drive_id: String, path: String, content: Vec<u8>) -> Result<(), String> {
+    parcela::vdrive_write_file(&drive_id, &path, content).map_err(|e| e.to_string())
+}
+
+/// Delete a file from a virtual drive
+#[tauri::command]
+fn vdrive_delete_file(drive_id: String, path: String) -> Result<(), String> {
+    parcela::vdrive_delete_file(&drive_id, &path).map_err(|e| e.to_string())
+}
+
+/// Create a directory in a virtual drive
+#[tauri::command]
+fn vdrive_create_dir(drive_id: String, path: String) -> Result<(), String> {
+    parcela::vdrive_create_dir(&drive_id, &path).map_err(|e| e.to_string())
+}
+
+/// Import a file from disk into the virtual drive
+#[tauri::command]
+fn vdrive_import_file(drive_id: String, dest_path: String) -> Result<String, String> {
+    // Pick a file from disk
+    let source = rfd::FileDialog::new()
+        .pick_file()
+        .ok_or("No file selected")?;
+    
+    // Read the file content
+    let content = std::fs::read(&source).map_err(|e| e.to_string())?;
+    
+    // Get the filename
+    let filename = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    
+    // Build destination path
+    let full_dest = if dest_path.is_empty() {
+        filename.to_string()
+    } else {
+        format!("{}/{}", dest_path.trim_end_matches('/'), filename)
+    };
+    
+    // Write to virtual drive
+    parcela::vdrive_write_file(&drive_id, &full_dest, content).map_err(|e| e.to_string())?;
+    
+    Ok(full_dest)
+}
+
+/// Export a file from the virtual drive to disk
+#[tauri::command]
+fn vdrive_export_file(drive_id: String, path: String) -> Result<String, String> {
+    // Read from virtual drive
+    let content = parcela::vdrive_read_file(&drive_id, &path).map_err(|e| e.to_string())?;
+    
+    // Get suggested filename from path
+    let filename = path.split('/').last().unwrap_or("file");
+    
+    // Pick save location
+    let dest = rfd::FileDialog::new()
+        .set_file_name(filename)
+        .save_file()
+        .ok_or("No save location selected")?;
+    
+    // Write to disk
+    std::fs::write(&dest, content).map_err(|e| e.to_string())?;
+    
+    Ok(dest.to_string_lossy().to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -425,7 +535,15 @@ fn main() {
             is_drive_unlocked,
             get_drive_mount_path,
             get_unlocked_drives,
-            uses_memory_mode
+            uses_memory_mode,
+            // Virtual drive file browser commands
+            vdrive_list_files,
+            vdrive_read_file,
+            vdrive_write_file,
+            vdrive_delete_file,
+            vdrive_create_dir,
+            vdrive_import_file,
+            vdrive_export_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
