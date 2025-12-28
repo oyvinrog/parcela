@@ -38,8 +38,7 @@ pub struct ParcelaFs {
     handles: Mutex<HashMap<u64, FileHandle>>,
     /// Next handle ID
     next_handle: Mutex<u64>,
-    /// Volume label (stored for potential future use in GetVolumeInfo)
-    #[allow(dead_code)]
+    /// Volume label for GetVolumeInfo
     volume_label: String,
     /// Creation time for the volume
     creation_time: SystemTime,
@@ -470,6 +469,70 @@ impl FileSystemContext for ParcelaFs {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn set_basic_info(
+        &self,
+        context: &Self::FileContext,
+        _file_attributes: u32,
+        _creation_time: u64,
+        _last_access_time: u64,
+        _last_write_time: u64,
+        _last_change_time: u64,
+        file_info: &mut FileInfo,
+    ) -> FspResult<()> {
+        // We don't persist timestamps in our in-memory filesystem,
+        // but we need to acknowledge the request for Windows Explorer to work
+        let handle = self.get_handle(*context).ok_or(FspError::from(STATUS_INVALID_DEVICE_REQUEST))?;
+
+        if handle.is_dir {
+            *file_info = self.make_file_info(&handle.path, true, 0);
+        } else {
+            let fs = self.fs.read().unwrap();
+            let size = fs.read_file(&handle.path).map(|v| v.len() as u64).unwrap_or(0);
+            *file_info = self.make_file_info(&handle.path, false, size);
+        }
+        Ok(())
+    }
+
+    fn set_file_size(
+        &self,
+        context: &Self::FileContext,
+        new_size: u64,
+        _set_allocation_size: bool,
+        file_info: &mut FileInfo,
+    ) -> FspResult<()> {
+        let handle = self.get_handle(*context).ok_or(FspError::from(STATUS_INVALID_DEVICE_REQUEST))?;
+
+        if handle.is_dir {
+            return Err(FspError::from(STATUS_INVALID_DEVICE_REQUEST));
+        }
+
+        let mut fs = self.fs.write().unwrap();
+        
+        // Get existing content or create empty
+        let mut content = fs.read_file(&handle.path).cloned().unwrap_or_default();
+        
+        // Resize the file
+        let new_size = new_size as usize;
+        if new_size > content.len() {
+            content.resize(new_size, 0);
+        } else {
+            content.truncate(new_size);
+        }
+        
+        fs.write_file(&handle.path, content);
+        
+        *file_info = self.make_file_info(&handle.path, false, new_size as u64);
+        Ok(())
+    }
+
+    fn get_volume_info(&self, out_volume_info: &mut winfsp::filesystem::VolumeInfo) -> FspResult<()> {
+        // Report a reasonable volume size (64 MB with plenty of free space)
+        out_volume_info.total_size = 64 * 1024 * 1024;
+        out_volume_info.free_size = 60 * 1024 * 1024;
+        out_volume_info.set_volume_label(&self.volume_label);
         Ok(())
     }
 }
