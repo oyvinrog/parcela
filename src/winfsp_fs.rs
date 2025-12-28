@@ -12,7 +12,7 @@ use std::time::SystemTime;
 
 use winfsp::filesystem::{
     DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext,
-    OpenFileInfo,
+    OpenFileInfo, WideNameInfo,
 };
 use winfsp::host::{FileSystemHost, VolumeParams};
 use winfsp::constants::MAX_PATH;
@@ -343,7 +343,7 @@ impl FileSystemContext for ParcelaFs {
         }
 
         // Write entries to buffer using DirInfo
-        let mut bytes_written = 0u32;
+        let mut cursor = 0u32;
         for (name, is_dir, size) in all_entries {
             // Skip entries before the marker
             if !marker.is_none() {
@@ -352,26 +352,21 @@ impl FileSystemContext for ParcelaFs {
             }
             
             let info = self.make_file_info(&name, is_dir, size);
-            let dir_info = DirInfo::<{ MAX_PATH }>::new(&info, &name);
-            
-            let entry_size = dir_info.byte_size();
-            if bytes_written as usize + entry_size > buffer.len() {
+            let mut dir_info = DirInfo::<{ MAX_PATH }>::new();
+            *dir_info.file_info_mut() = info;
+            if dir_info.set_name(&name).is_err() {
                 break;
             }
             
-            // Copy entry to buffer
-            let entry_bytes = unsafe {
-                std::slice::from_raw_parts(
-                    &dir_info as *const _ as *const u8,
-                    entry_size,
-                )
-            };
-            buffer[bytes_written as usize..bytes_written as usize + entry_size]
-                .copy_from_slice(entry_bytes);
-            bytes_written += entry_size as u32;
+            if !dir_info.append_to_buffer(buffer, &mut cursor) {
+                break;
+            }
         }
+        
+        // Finalize the buffer
+        DirInfo::<{ MAX_PATH }>::finalize_buffer(buffer, &mut cursor);
 
-        Ok(bytes_written)
+        Ok(cursor)
     }
 
     fn create(
