@@ -534,7 +534,28 @@ impl WinfspMount {
         host.start()
             .map_err(|e| format!("Failed to start filesystem dispatcher: {:?}", e))?;
         
-        Ok(WinfspMount { host, drive_letter, fs: fs_arc })
+        let mount = WinfspMount { host, drive_letter, fs: fs_arc };
+        
+        // Wait for the drive to become accessible
+        // WinFsp needs a moment for Windows to recognize the new drive
+        let drive_path = mount.mount_path();
+        let mut ready = false;
+        for attempt in 0..50 {  // Up to 5 seconds (50 * 100ms)
+            if std::path::Path::new(&drive_path).exists() {
+                ready = true;
+                if attempt > 0 {
+                    eprintln!("[WinFsp] Drive {} ready after {}ms", drive_path, attempt * 100);
+                }
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        
+        if !ready {
+            eprintln!("[WinFsp] Warning: Drive {} not detected after 5s, proceeding anyway", drive_path);
+        }
+        
+        Ok(mount)
     }
 
     /// Get the mount path (e.g., "P:\")
