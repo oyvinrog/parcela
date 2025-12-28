@@ -3,7 +3,7 @@
 //! A virtual drive is stored encrypted and split into shares like any other file.
 //! When unlocked, it creates a temporary filesystem in RAM (tmpfs) that leaves no trace.
 //!
-//! On Windows: Uses WinFsp to create a real drive letter (e.g., P:) backed by RAM.
+//! On Windows: Uses ProjFS to create a projected filesystem visible in Explorer.
 //! On Linux/macOS: Uses a directory in /tmp which is typically already a tmpfs.
 
 use serde::{Deserialize, Serialize};
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 #[cfg(target_os = "windows")]
-use crate::winfsp_fs::WinfspMount;
+use crate::projfs_fs::{ProjFsMount, is_projfs_available};
 
 /// In-memory file storage for Windows (and optionally other platforms)
 /// This ensures files never touch the disk
@@ -475,11 +475,11 @@ impl VirtualDrive {
 pub struct MountedDriveState {
     pub drive_id: String,
     pub mount_path: PathBuf,
-    /// Memory-based filesystem (used when WinFsp is not available)
+    /// Memory-based filesystem (used when ProjFS is not available)
     pub memory_fs: Option<MemoryFileSystem>,
-    /// WinFsp mount handle (Windows only)
+    /// ProjFS mount handle (Windows only)
     #[cfg(target_os = "windows")]
-    pub winfsp_mount: Option<WinfspMount>,
+    pub projfs_mount: Option<ProjFsMount>,
 }
 
 impl MountedDriveState {
@@ -487,19 +487,19 @@ impl MountedDriveState {
     pub fn is_memory_mode(&self) -> bool {
         #[cfg(target_os = "windows")]
         {
-            // On Windows, we're NOT in memory-only mode if WinFsp is active
-            self.winfsp_mount.is_none() && self.memory_fs.is_some()
+            // On Windows, we're NOT in memory-only mode if ProjFS is active
+            self.projfs_mount.is_none() && self.memory_fs.is_some()
         }
         #[cfg(not(target_os = "windows"))]
         {
             self.memory_fs.is_some()
         }
     }
-    
-    /// Check if this drive uses WinFsp (Windows native mount)
+
+    /// Check if this drive uses ProjFS (Windows native mount)
     #[cfg(target_os = "windows")]
-    pub fn uses_winfsp(&self) -> bool {
-        self.winfsp_mount.is_some()
+    pub fn uses_projfs(&self) -> bool {
+        self.projfs_mount.is_some()
     }
 }
 
@@ -509,15 +509,15 @@ lazy_static::lazy_static! {
 }
 
 /// Check if the current platform uses memory-only mode (no native filesystem)
-/// 
-/// On Windows with WinFsp installed: returns false (uses native drive mount)
-/// On Windows without WinFsp: returns true (uses in-memory storage with custom UI)
+///
+/// On Windows with ProjFS enabled: returns false (uses native projected filesystem)
+/// On Windows without ProjFS: returns true (uses in-memory storage with custom UI)
 /// On Linux/macOS: returns false (uses tmpfs directory)
 pub fn uses_memory_mode() -> bool {
     #[cfg(target_os = "windows")]
     {
-        // Check if WinFsp is available
-        !is_winfsp_available()
+        // Check if ProjFS is available
+        !is_projfs_available()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -525,57 +525,11 @@ pub fn uses_memory_mode() -> bool {
     }
 }
 
-/// Check if WinFsp DLL files are present on Windows
-/// 
-/// Note: This only checks if the DLL files exist, not if WinFsp is properly
-/// functional. The actual availability is only confirmed when mounting.
-/// On Windows, we always attempt to use WinFsp and fall back to memory mode
-/// if it fails.
-#[cfg(target_os = "windows")]
-pub fn is_winfsp_available() -> bool {
-    use std::path::Path;
-    
-    // Check multiple possible installation paths for WinFsp
-    let paths_to_check = [
-        // 64-bit installation (most common)
-        std::env::var("ProgramFiles")
-            .map(|pf| format!("{}\\WinFsp\\bin\\winfsp-x64.dll", pf))
-            .unwrap_or_default(),
-        // 32-bit installation on 64-bit Windows
-        std::env::var("ProgramFiles(x86)")
-            .map(|pf| format!("{}\\WinFsp\\bin\\winfsp-x86.dll", pf))
-            .unwrap_or_default(),
-        // Hardcoded fallbacks
-        "C:\\Program Files\\WinFsp\\bin\\winfsp-x64.dll".to_string(),
-        "C:\\Program Files (x86)\\WinFsp\\bin\\winfsp-x86.dll".to_string(),
-    ];
-    
-    for path in &paths_to_check {
-        if !path.is_empty() && Path::new(path).exists() {
-            eprintln!("[Parcela] Found WinFsp DLL at: {}", path);
-            return true;
-        }
-    }
-    
-    eprintln!("[Parcela] WinFsp DLL not found. Checked paths:");
-    for path in &paths_to_check {
-        if !path.is_empty() {
-            eprintln!("  - {}", path);
-        }
-    }
-    
-    false
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn is_winfsp_available() -> bool {
-    false
-}
 
 /// Get the expected mount point path for a virtual drive
-/// 
-/// Note: On Windows with WinFsp, this returns a placeholder path.
-/// The actual mount path (e.g., "P:\") is determined at mount time.
+///
+/// On Windows with ProjFS: Returns a temp directory path used as virtualization root.
+/// On Linux/macOS: Returns a tmpfs-backed directory.
 /// Use `get_mounted_path()` to get the actual path of a mounted drive.
 pub fn get_mount_path(drive_id: &str) -> PathBuf {
     #[cfg(target_os = "linux")]
@@ -590,24 +544,12 @@ pub fn get_mount_path(drive_id: &str) -> PathBuf {
 
     #[cfg(target_os = "windows")]
     {
-        if is_winfsp_available() {
-            // WinFsp will assign a drive letter dynamically at mount time.
-            // This function cannot predict the actual drive letter - callers should
-            // use get_mounted_path(drive_id) after mounting to get the real path.
-            // We return a temp-dir-based path as a pre-mount placeholder.
-            PathBuf::from(format!(
-                "{}\\parcela-vdrive-{}",
-                std::env::temp_dir().to_string_lossy(),
-                drive_id
-            ))
-        } else {
-            // Fallback to temp dir for memory-only mode
-            PathBuf::from(format!(
-                "{}\\parcela-vdrive-{}",
-                std::env::temp_dir().to_string_lossy(),
-                drive_id
-            ))
-        }
+        // ProjFS uses a directory as the virtualization root
+        PathBuf::from(format!(
+            "{}\\parcela-vdrive-{}",
+            std::env::temp_dir().to_string_lossy(),
+            drive_id
+        ))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -635,8 +577,8 @@ pub fn get_mounted_path(drive_id: &str) -> Option<PathBuf> {
 /// Unlock (mount) a virtual drive as a RAM-backed filesystem
 ///
 /// On Linux/macOS: Creates a directory in /tmp which is typically already a tmpfs.
-/// On Windows with WinFsp: Creates a real drive letter (e.g., P:\) backed by RAM.
-/// On Windows without WinFsp: Uses memory-only storage with custom UI for browsing.
+/// On Windows with ProjFS: Creates a projected filesystem in a temp directory.
+/// On Windows without ProjFS: Uses memory-only storage with custom UI for browsing.
 ///
 /// Returns the mount path. Use this path to browse the drive in your file manager.
 pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> {
@@ -654,77 +596,76 @@ pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> 
 
     #[cfg(target_os = "windows")]
     {
-        // Try to use WinFsp for native Windows Explorer integration
-        let winfsp_available = is_winfsp_available();
-        eprintln!("[Parcela] WinFsp available: {}", winfsp_available);
-        
-        if winfsp_available {
+        // Try to use ProjFS for native Windows Explorer integration
+        let projfs_available = is_projfs_available();
+        eprintln!("[Parcela] ProjFS available: {}", projfs_available);
+
+        if projfs_available {
             let fs = if !drive.content.is_empty() {
                 MemoryFileSystem::from_archive(&drive.content)
             } else {
                 MemoryFileSystem::new()
             };
-            
-            eprintln!("[Parcela] Attempting WinFsp mount for drive: {}", drive.metadata.name);
-            match WinfspMount::mount(fs, &drive.metadata.name) {
+
+            let mount_path = get_mount_path(drive_id);
+            eprintln!("[Parcela] Attempting ProjFS mount for drive: {}", drive.metadata.name);
+            match ProjFsMount::mount(fs, &drive.metadata.name, mount_path.clone()) {
                 Ok(mount) => {
-                    let mount_path = PathBuf::from(mount.mount_path());
-                    eprintln!("[Parcela] WinFsp mount successful at: {}", mount_path.display());
+                    eprintln!("[Parcela] ProjFS mount successful at: {}", mount_path.display());
                     drives.insert(
                         drive_id.to_string(),
                         MountedDriveState {
                             drive_id: drive_id.to_string(),
                             mount_path: mount_path.clone(),
                             memory_fs: None,
-                            winfsp_mount: Some(mount),
+                            projfs_mount: Some(mount),
                         },
                     );
                     return Ok(mount_path);
                 }
                 Err(e) => {
-                    // Fall back to memory-only mode if WinFsp fails
-                    eprintln!("[Parcela] WinFsp mount FAILED: {}", e);
-                    eprintln!("[Parcela] Falling back to memory-only mode. To use native drive mounting:");
-                    eprintln!("  1. Ensure WinFsp is installed: https://winfsp.dev/");
-                    eprintln!("  2. Run the app as Administrator (may be required for first mount)");
-                    eprintln!("  3. Restart the application after installing WinFsp");
+                    // Fall back to memory-only mode if ProjFS fails
+                    eprintln!("[Parcela] ProjFS mount FAILED: {}", e);
+                    eprintln!("[Parcela] Falling back to memory-only mode. To use ProjFS:");
+                    eprintln!("  1. Enable ProjFS: Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS");
+                    eprintln!("  2. Restart Windows after enabling the feature");
                 }
             }
         } else {
-            eprintln!("[Parcela] WinFsp not available - using memory-only mode");
-            eprintln!("[Parcela] Install WinFsp for native Windows Explorer integration: https://winfsp.dev/");
+            eprintln!("[Parcela] ProjFS not available - using memory-only mode");
+            eprintln!("[Parcela] Enable ProjFS: Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS");
         }
-        
+
         // Fallback: memory-only mode (no native filesystem mount)
         let fs = if !drive.content.is_empty() {
             MemoryFileSystem::from_archive(&drive.content)
         } else {
             MemoryFileSystem::new()
         };
-        
+
         let mount_path = PathBuf::from(format!(
             "{}\\parcela-vdrive-{}",
             std::env::temp_dir().to_string_lossy(),
             drive_id
         ));
-        
+
         drives.insert(
             drive_id.to_string(),
             MountedDriveState {
                 drive_id: drive_id.to_string(),
                 mount_path: mount_path.clone(),
                 memory_fs: Some(fs),
-                winfsp_mount: None,
+                projfs_mount: None,
             },
         );
-        
+
         return Ok(mount_path);
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         let mount_path = get_mount_path(drive_id);
-        
+
         // On Linux/macOS, use tmpfs-backed directory
         std::fs::create_dir_all(&mount_path)?;
 
@@ -749,8 +690,8 @@ pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> 
 /// Lock a virtual drive and capture its content
 ///
 /// On Linux/macOS: Captures files from directory, securely wipes, removes directory.
-/// On Windows with WinFsp: Unmounts the drive and captures from the WinFsp filesystem.
-/// On Windows without WinFsp: Captures from memory, clears memory.
+/// On Windows with ProjFS: Unmounts the projection and captures from the ProjFS filesystem.
+/// On Windows without ProjFS: Captures from memory, clears memory.
 ///
 /// The captured content is stored in the VirtualDrive struct for re-encryption.
 pub fn lock_drive(drive: &mut VirtualDrive) -> Result<(), VirtualDriveError> {
@@ -764,9 +705,9 @@ pub fn lock_drive(drive: &mut VirtualDrive) -> Result<(), VirtualDriveError> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Some(winfsp_mount) = state.winfsp_mount {
-            // WinFsp mode: unmount and capture the filesystem
-            let fs = winfsp_mount.unmount();
+        if let Some(projfs_mount) = state.projfs_mount {
+            // ProjFS mode: unmount and capture the filesystem
+            let fs = projfs_mount.unmount();
             drive.content = fs.to_archive();
         } else if let Some(mut memory_fs) = state.memory_fs {
             // Memory-only mode: capture from memory
@@ -786,10 +727,10 @@ pub fn lock_drive(drive: &mut VirtualDrive) -> Result<(), VirtualDriveError> {
             // Disk mode: capture from filesystem
             let mount_path = state.mount_path.clone();
             drive.content = capture_mount_content(&mount_path)?;
-            
+
             // Securely remove directory contents (overwrites files before deletion)
             secure_remove_dir_contents(&mount_path)?;
-            
+
             // Remove the directory
             let _ = std::fs::remove_dir(&mount_path);
         }
@@ -802,14 +743,14 @@ pub fn lock_drive(drive: &mut VirtualDrive) -> Result<(), VirtualDriveError> {
 // =============================================================================
 
 /// Check if the drive uses native filesystem access (not memory-only mode)
-/// 
+///
 /// When true, files can be accessed directly through mount_path.
 /// When false, must use vdrive_* functions.
 #[allow(dead_code)]
 fn uses_native_fs(state: &MountedDriveState) -> bool {
     #[cfg(target_os = "windows")]
     {
-        state.winfsp_mount.is_some()
+        state.projfs_mount.is_some()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -819,8 +760,8 @@ fn uses_native_fs(state: &MountedDriveState) -> bool {
 
 /// List files in a mounted virtual drive
 ///
-/// On Windows with WinFsp: Lists from the mounted drive letter
-/// On Windows without WinFsp: Lists from in-memory storage
+/// On Windows with ProjFS: Lists from the projected filesystem
+/// On Windows without ProjFS: Lists from in-memory storage
 /// On Linux/macOS: Lists from the tmpfs directory
 pub fn vdrive_list_files(drive_id: &str, path: &str) -> Result<Vec<String>, VirtualDriveError> {
     let drives = MOUNTED_DRIVES
@@ -829,10 +770,10 @@ pub fn vdrive_list_files(drive_id: &str, path: &str) -> Result<Vec<String>, Virt
 
     let state = drives.get(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
-    // On Windows, check if we have a WinFsp mount - if so, use its direct access methods
+    // On Windows, check if we have a ProjFS mount - if so, use its direct access methods
     #[cfg(target_os = "windows")]
-    if let Some(ref winfsp_mount) = state.winfsp_mount {
-        return Ok(winfsp_mount.list_directory(path));
+    if let Some(ref projfs_mount) = state.projfs_mount {
+        return Ok(projfs_mount.list_directory(path));
     }
 
     if let Some(ref memory_fs) = state.memory_fs {
@@ -842,7 +783,7 @@ pub fn vdrive_list_files(drive_id: &str, path: &str) -> Result<Vec<String>, Virt
         // Native filesystem mode (Linux/macOS tmpfs)
         let full_path = state.mount_path.join(path);
         let mut entries = Vec::new();
-        
+
         if full_path.exists() && full_path.is_dir() {
             for entry in std::fs::read_dir(&full_path)? {
                 let entry = entry?;
@@ -867,11 +808,11 @@ pub fn vdrive_read_file(drive_id: &str, path: &str) -> Result<Vec<u8>, VirtualDr
 
     let state = drives.get(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
-    // On Windows, check if we have a WinFsp mount - if so, use its direct access methods
+    // On Windows, check if we have a ProjFS mount - if so, use its direct access methods
     #[cfg(target_os = "windows")]
-    if let Some(ref winfsp_mount) = state.winfsp_mount {
-        // Read directly from WinFsp's internal filesystem
-        return winfsp_mount.read_file(path)
+    if let Some(ref projfs_mount) = state.projfs_mount {
+        // Read directly from ProjFS's internal filesystem
+        return projfs_mount.read_file(path)
             .ok_or_else(|| VirtualDriveError::IoError(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 "file not found",
@@ -902,11 +843,11 @@ pub fn vdrive_write_file(drive_id: &str, path: &str, content: Vec<u8>) -> Result
 
     let state = drives.get_mut(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
-    // On Windows, check if we have a WinFsp mount - if so, use its direct access methods
+    // On Windows, check if we have a ProjFS mount - if so, use its direct access methods
     #[cfg(target_os = "windows")]
-    if let Some(ref winfsp_mount) = state.winfsp_mount {
-        // Write directly to WinFsp's internal filesystem (bypasses OS filesystem API)
-        winfsp_mount.write_file(path, content);
+    if let Some(ref projfs_mount) = state.projfs_mount {
+        // Write directly to ProjFS's internal filesystem
+        projfs_mount.write_file(path, content);
         return Ok(());
     }
 
@@ -917,14 +858,14 @@ pub fn vdrive_write_file(drive_id: &str, path: &str, content: Vec<u8>) -> Result
     } else {
         // Disk mode (Linux tmpfs) - write via OS filesystem
         let full_path = state.mount_path.join(path);
-        
+
         // Create parent directories if needed
         if let Some(parent) = full_path.parent() {
             if parent != state.mount_path && !parent.exists() {
                 std::fs::create_dir_all(parent)?;
             }
         }
-        
+
         std::fs::write(&full_path, content).map_err(VirtualDriveError::from)
     }
 }
@@ -937,10 +878,10 @@ pub fn vdrive_delete_file(drive_id: &str, path: &str) -> Result<(), VirtualDrive
 
     let state = drives.get_mut(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
-    // On Windows, check if we have a WinFsp mount - if so, use its direct access methods
+    // On Windows, check if we have a ProjFS mount - if so, use its direct access methods
     #[cfg(target_os = "windows")]
-    if let Some(ref winfsp_mount) = state.winfsp_mount {
-        if winfsp_mount.delete_file(path) {
+    if let Some(ref projfs_mount) = state.projfs_mount {
+        if projfs_mount.delete_file(path) {
             return Ok(());
         } else {
             return Err(VirtualDriveError::IoError(std::io::Error::new(
@@ -975,10 +916,10 @@ pub fn vdrive_create_dir(drive_id: &str, path: &str) -> Result<(), VirtualDriveE
 
     let state = drives.get_mut(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
-    // On Windows, check if we have a WinFsp mount - if so, use its direct access methods
+    // On Windows, check if we have a ProjFS mount - if so, use its direct access methods
     #[cfg(target_os = "windows")]
-    if let Some(ref winfsp_mount) = state.winfsp_mount {
-        winfsp_mount.create_dir_all(path);
+    if let Some(ref projfs_mount) = state.projfs_mount {
+        projfs_mount.create_dir_all(path);
         return Ok(());
     }
 
@@ -1007,7 +948,7 @@ pub fn is_memory_mode(drive_id: &str) -> bool {
 // =============================================================================
 
 /// Capture the content of a mounted drive as a tar archive
-/// Note: Used on non-Windows platforms; on Windows, WinFsp provides its own filesystem extraction
+/// Note: Used on non-Windows platforms; on Windows, ProjFS provides its own filesystem extraction
 #[allow(dead_code)]
 fn capture_mount_content(mount_path: &Path) -> Result<Vec<u8>, VirtualDriveError> {
     let mut archive_data = Vec::new();
@@ -1439,31 +1380,29 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn is_winfsp_available_returns_bool() {
+    fn is_projfs_available_returns_bool() {
         // This function should always return a boolean without panicking
-        let result = is_winfsp_available();
-        // On non-Windows, always false. On Windows, depends on installation.
-        #[cfg(not(target_os = "windows"))]
-        assert!(!result);
-        
-        // On Windows, we just verify it doesn't panic
         #[cfg(target_os = "windows")]
-        let _ = result;
+        {
+            let result = is_projfs_available();
+            // On Windows, we just verify it doesn't panic
+            let _ = result;
+        }
     }
 
     #[test]
     fn uses_memory_mode_consistent_with_platform() {
         let memory_mode = uses_memory_mode();
-        
+
         // On non-Windows: should not use memory mode (uses tmpfs)
         #[cfg(not(target_os = "windows"))]
         assert!(!memory_mode);
-        
-        // On Windows: memory mode is the opposite of WinFsp availability
+
+        // On Windows: memory mode is the opposite of ProjFS availability
         #[cfg(target_os = "windows")]
         {
-            let winfsp = is_winfsp_available();
-            assert_eq!(memory_mode, !winfsp);
+            let projfs = is_projfs_available();
+            assert_eq!(memory_mode, !projfs);
         }
     }
 
@@ -1475,21 +1414,21 @@ mod tests {
             mount_path: PathBuf::from("/tmp/test"),
             memory_fs: Some(MemoryFileSystem::new()),
             #[cfg(target_os = "windows")]
-            winfsp_mount: None,
+            projfs_mount: None,
         };
-        
+
         // Memory-only mode should not be "native fs"
         assert!(!uses_native_fs(&state_with_memory));
-        
+
         // State without memory_fs uses native filesystem
         let state_native = MountedDriveState {
             drive_id: "test2".to_string(),
             mount_path: PathBuf::from("/tmp/test2"),
             memory_fs: None,
             #[cfg(target_os = "windows")]
-            winfsp_mount: None,
+            projfs_mount: None,
         };
-        
+
         #[cfg(not(target_os = "windows"))]
         assert!(uses_native_fs(&state_native));
     }
@@ -1501,19 +1440,19 @@ mod tests {
             mount_path: PathBuf::from("/tmp/test"),
             memory_fs: Some(MemoryFileSystem::new()),
             #[cfg(target_os = "windows")]
-            winfsp_mount: None,
+            projfs_mount: None,
         };
-        
+
         assert!(state_memory.is_memory_mode());
-        
+
         let state_native = MountedDriveState {
             drive_id: "test2".to_string(),
             mount_path: PathBuf::from("/tmp/test2"),
             memory_fs: None,
             #[cfg(target_os = "windows")]
-            winfsp_mount: None,
+            projfs_mount: None,
         };
-        
+
         assert!(!state_native.is_memory_mode());
     }
 
