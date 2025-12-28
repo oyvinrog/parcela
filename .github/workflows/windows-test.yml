@@ -164,7 +164,8 @@ jobs:
         run: cargo test --verbose
       
       - name: Run WinFsp integration tests
-        run: cargo test --test winfsp_integration -- --ignored --nocapture
+        # Run serially (--test-threads=1) because tests compete for drive letters
+        run: cargo test --test winfsp_integration -- --ignored --nocapture --test-threads=1
       
       - name: Test Tauri app builds
         working-directory: src-tauri
