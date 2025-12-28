@@ -351,11 +351,7 @@ impl FileSystemContext for ParcelaFs {
         all_entries.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Get marker name to skip entries we've already returned
-        let marker_name = if marker.is_none() {
-            None
-        } else {
-            marker.name().map(|s| s.to_string_lossy())
-        };
+        let marker_name: Option<String> = marker.inner_as_cstr().map(|s| s.to_string_lossy());
 
         // Write entries to buffer using DirInfo
         let mut cursor = 0u32;
