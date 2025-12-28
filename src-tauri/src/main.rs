@@ -103,81 +103,106 @@ fn pick_output_file() -> Option<String> {
 }
 
 #[tauri::command]
-fn split_file(input_path: String, out_dir: String, password: String) -> Result<Vec<String>, String> {
-    let input = std::path::PathBuf::from(&input_path);
-    let out_dir = std::path::PathBuf::from(&out_dir);
+async fn split_file(input_path: String, out_dir: String, password: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let input = std::path::PathBuf::from(&input_path);
+        let out_dir = std::path::PathBuf::from(&out_dir);
 
-    let plaintext = std::fs::read(&input).map_err(|e| e.to_string())?;
-    let encrypted = parcela::encrypt(&plaintext, &password).map_err(|e| e.to_string())?;
-    let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
+        let plaintext = std::fs::read(&input).map_err(|e| e.to_string())?;
+        let encrypted = parcela::encrypt(&plaintext, &password).map_err(|e| e.to_string())?;
+        let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
 
-    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
-    let base_name = input
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("file");
+        std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+        let base_name = input
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("file");
 
-    let mut output_paths = Vec::with_capacity(shares.len());
-    for share in shares.iter() {
-        let filename = format!("{base_name}.share{}", share.index);
-        let path = out_dir.join(filename);
-        let data = parcela::encode_share(share);
-        std::fs::write(&path, data).map_err(|e| e.to_string())?;
-        output_paths.push(path.to_string_lossy().to_string());
-    }
+        let mut output_paths = Vec::with_capacity(shares.len());
+        for share in shares.iter() {
+            let filename = format!("{base_name}.share{}", share.index);
+            let path = out_dir.join(filename);
+            let data = parcela::encode_share(share);
+            std::fs::write(&path, data).map_err(|e| e.to_string())?;
+            output_paths.push(path.to_string_lossy().to_string());
+        }
 
-    Ok(output_paths)
+        Ok(output_paths)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn combine_shares(
+async fn combine_shares(
     share_paths: Vec<String>,
     output_path: String,
     password: String,
 ) -> Result<String, String> {
-    if share_paths.len() < 2 {
-        return Err("need at least two shares".to_string());
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        if share_paths.len() < 2 {
+            return Err("need at least two shares".to_string());
+        }
 
-    let mut shares = Vec::with_capacity(share_paths.len());
-    for path in share_paths {
+        let mut shares = Vec::with_capacity(share_paths.len());
+        for path in share_paths {
+            let data = std::fs::read(&path).map_err(|e| e.to_string())?;
+            let share = parcela::decode_share(&data).map_err(|e| e.to_string())?;
+            shares.push(share);
+        }
+
+        let encrypted = parcela::combine_shares(&shares).map_err(|e| e.to_string())?;
+        let plaintext = parcela::decrypt(&encrypted, &password).map_err(|e| e.to_string())?;
+        std::fs::write(&output_path, plaintext).map_err(|e| e.to_string())?;
+
+        Ok(output_path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn create_vault(path: String, password: String) -> Result<VaultData, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let vault = VaultData {
+            version: 1,
+            files: Vec::new(),
+            virtual_drives: Vec::new(),
+        };
+        save_vault_sync(&path, &password, &vault)?;
+        Ok(vault)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn open_vault(path: String, password: String) -> Result<VaultData, String> {
+    tauri::async_runtime::spawn_blocking(move || {
         let data = std::fs::read(&path).map_err(|e| e.to_string())?;
-        let share = parcela::decode_share(&data).map_err(|e| e.to_string())?;
-        shares.push(share);
-    }
-
-    let encrypted = parcela::combine_shares(&shares).map_err(|e| e.to_string())?;
-    let plaintext = parcela::decrypt(&encrypted, &password).map_err(|e| e.to_string())?;
-    std::fs::write(&output_path, plaintext).map_err(|e| e.to_string())?;
-
-    Ok(output_path)
+        let decrypted = parcela::decrypt(&data, &password).map_err(|e| e.to_string())?;
+        let vault: VaultData = serde_json::from_slice(&decrypted).map_err(|e| e.to_string())?;
+        Ok(vault)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-fn create_vault(path: String, password: String) -> Result<VaultData, String> {
-    let vault = VaultData {
-        version: 1,
-        files: Vec::new(),
-        virtual_drives: Vec::new(),
-    };
-    save_vault(path, password, vault.clone())?;
-    Ok(vault)
-}
-
-#[tauri::command]
-fn open_vault(path: String, password: String) -> Result<VaultData, String> {
-    let data = std::fs::read(&path).map_err(|e| e.to_string())?;
-    let decrypted = parcela::decrypt(&data, &password).map_err(|e| e.to_string())?;
-    let vault: VaultData = serde_json::from_slice(&decrypted).map_err(|e| e.to_string())?;
-    Ok(vault)
-}
-
-#[tauri::command]
-fn save_vault(path: String, password: String, vault: VaultData) -> Result<(), String> {
-    let json = serde_json::to_vec(&vault).map_err(|e| e.to_string())?;
-    let encrypted = parcela::encrypt(&json, &password).map_err(|e| e.to_string())?;
-    std::fs::write(&path, encrypted).map_err(|e| e.to_string())?;
+// Sync helper for internal use
+fn save_vault_sync(path: &str, password: &str, vault: &VaultData) -> Result<(), String> {
+    let json = serde_json::to_vec(vault).map_err(|e| e.to_string())?;
+    let encrypted = parcela::encrypt(&json, password).map_err(|e| e.to_string())?;
+    std::fs::write(path, encrypted).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+async fn save_vault(path: String, password: String, vault: VaultData) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        save_vault_sync(&path, &password, &vault)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -201,48 +226,52 @@ fn open_path(path: String) -> Result<(), String> {
 
 /// Create a new virtual drive in the vault
 #[tauri::command]
-fn create_virtual_drive(
+async fn create_virtual_drive(
     name: String,
     size_mb: u32,
     out_dir: String,
     password: String,
 ) -> Result<VaultVirtualDrive, String> {
-    let drive = parcela::VirtualDrive::new(name.clone(), size_mb);
-    let drive_id = drive.metadata.id.clone();
-    let created_at = drive.metadata.created_at;
+    tauri::async_runtime::spawn_blocking(move || {
+        let drive = parcela::VirtualDrive::new(name.clone(), size_mb);
+        let drive_id = drive.metadata.id.clone();
+        let created_at = drive.metadata.created_at;
 
-    // Encode and encrypt the drive
-    let encoded = drive.encode().map_err(|e| e.to_string())?;
-    let encrypted = parcela::encrypt(&encoded, &password).map_err(|e| e.to_string())?;
+        // Encode and encrypt the drive
+        let encoded = drive.encode().map_err(|e| e.to_string())?;
+        let encrypted = parcela::encrypt(&encoded, &password).map_err(|e| e.to_string())?;
 
-    // Split into shares
-    let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
+        // Split into shares
+        let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
 
-    // Save shares to the output directory
-    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
-    let base_name = format!("{}.vdrive", name.replace(['/', '\\', ':'], "_"));
+        // Save shares to the output directory
+        std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+        let base_name = format!("{}.vdrive", name.replace(['/', '\\', ':'], "_"));
 
-    let mut share_paths: [Option<String>; 3] = [None, None, None];
-    for share in shares.iter() {
-        let filename = format!("{}.share{}", base_name, share.index);
-        let path = std::path::PathBuf::from(&out_dir).join(filename);
-        let data = parcela::encode_share(share);
-        std::fs::write(&path, data).map_err(|e| e.to_string())?;
-        share_paths[(share.index - 1) as usize] = Some(path.to_string_lossy().to_string());
-    }
+        let mut share_paths: [Option<String>; 3] = [None, None, None];
+        for share in shares.iter() {
+            let filename = format!("{}.share{}", base_name, share.index);
+            let path = std::path::PathBuf::from(&out_dir).join(filename);
+            let data = parcela::encode_share(share);
+            std::fs::write(&path, data).map_err(|e| e.to_string())?;
+            share_paths[(share.index - 1) as usize] = Some(path.to_string_lossy().to_string());
+        }
 
-    Ok(VaultVirtualDrive {
-        id: drive_id,
-        name,
-        size_mb,
-        shares: share_paths,
-        created_at,
+        Ok(VaultVirtualDrive {
+            id: drive_id,
+            name,
+            size_mb,
+            shares: share_paths,
+            created_at,
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Unlock a virtual drive (mount it as a RAM filesystem)
 #[tauri::command]
-fn unlock_virtual_drive(
+async fn unlock_virtual_drive(
     share_paths: Vec<String>,
     password: String,
 ) -> Result<UnlockedDriveInfo, String> {
@@ -250,24 +279,31 @@ fn unlock_virtual_drive(
         return Err("need at least two shares".to_string());
     }
 
-    // Read and decode shares
-    let mut shares = Vec::with_capacity(share_paths.len());
-    for path in &share_paths {
-        let data = std::fs::read(path).map_err(|e| e.to_string())?;
-        let share = parcela::decode_share(&data).map_err(|e| e.to_string())?;
-        shares.push(share);
-    }
+    // Do the heavy crypto work in a blocking thread
+    let (drive, drive_id, drive_name) = tauri::async_runtime::spawn_blocking(move || {
+        // Read and decode shares
+        let mut shares = Vec::with_capacity(share_paths.len());
+        for path in &share_paths {
+            let data = std::fs::read(path).map_err(|e| e.to_string())?;
+            let share = parcela::decode_share(&data).map_err(|e| e.to_string())?;
+            shares.push(share);
+        }
 
-    // Combine shares and decrypt
-    let encrypted = parcela::combine_shares(&shares).map_err(|e| e.to_string())?;
-    let decrypted = parcela::decrypt(&encrypted, &password).map_err(|e| e.to_string())?;
+        // Combine shares and decrypt
+        let encrypted = parcela::combine_shares(&shares).map_err(|e| e.to_string())?;
+        let decrypted = parcela::decrypt(&encrypted, &password).map_err(|e| e.to_string())?;
 
-    // Decode the virtual drive
-    let drive = parcela::VirtualDrive::decode(&decrypted).map_err(|e| e.to_string())?;
-    let drive_id = drive.metadata.id.clone();
-    let drive_name = drive.metadata.name.clone();
+        // Decode the virtual drive
+        let drive = parcela::VirtualDrive::decode(&decrypted).map_err(|e| e.to_string())?;
+        let drive_id = drive.metadata.id.clone();
+        let drive_name = drive.metadata.name.clone();
 
-    // Unlock (mount) the drive
+        Ok::<_, String>((drive, drive_id, drive_name))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    // Unlock (mount) the drive - this should be fast
     let mount_path = parcela::unlock_drive(&drive).map_err(|e| e.to_string())?;
     let mount_path_str = mount_path.to_string_lossy().to_string();
 
@@ -300,7 +336,7 @@ struct UnlockedDriveInfo {
 
 /// Lock a virtual drive (unmount and re-encrypt)
 #[tauri::command]
-fn lock_virtual_drive(
+async fn lock_virtual_drive(
     drive_id: String,
     share_paths: [Option<String>; 3],
     password: String,
@@ -312,8 +348,7 @@ fn lock_virtual_drive(
         .remove(&drive_id)
         .ok_or("drive is not unlocked")?;
 
-    // Lock the drive (captures content)
-    // If this fails, re-insert the state to avoid orphaning the drive
+    // Lock the drive (captures content) - this is fast
     if let Err(e) = parcela::lock_drive(&mut state.drive) {
         // Re-insert the state so user can retry
         if let Ok(mut drives) = UNLOCKED_DRIVES.lock() {
@@ -322,9 +357,8 @@ fn lock_virtual_drive(
         return Err(e.to_string());
     }
 
-    // Re-encode, encrypt, and save shares
-    // If any of these fail, preserve the state so user can retry saving
-    let save_result = (|| -> Result<(), String> {
+    // Do the heavy crypto work in a blocking thread
+    let save_result = tauri::async_runtime::spawn_blocking(move || {
         let encoded = state.drive.encode().map_err(|e| e.to_string())?;
         let encrypted = parcela::encrypt(&encoded, &password).map_err(|e| e.to_string())?;
 
@@ -339,19 +373,17 @@ fn lock_virtual_drive(
                 std::fs::write(path, data).map_err(|e| e.to_string())?;
             }
         }
-        Ok(())
-    })();
+        Ok::<_, String>(())
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     if let Err(e) = save_result {
         // Drive is locked (removed from MOUNTED_DRIVES) but content is captured.
-        // Keep it in UNLOCKED_DRIVES so user can retry saving.
-        // Clear mount path since it's no longer mounted.
-        state.mount_path = String::new();
-        if let Ok(mut drives) = UNLOCKED_DRIVES.lock() {
-            drives.insert(drive_id, state);
-        }
+        // We can't re-insert the state since it was moved into the blocking task.
+        // The user will need to re-unlock the drive from shares.
         return Err(format!(
-            "drive locked but failed to save shares: {}. Content preserved for retry.",
+            "drive locked but failed to save shares: {}",
             e
         ));
     }

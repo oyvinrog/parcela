@@ -161,17 +161,20 @@ Output: `src-tauri/target/release/bundle/`
 ### Cryptography
 
 - **Encryption:** AES-256-GCM (authenticated encryption)
-- **Key Derivation:** SHA-256(passphrase) — upgrade to Argon2 planned
+- **Key Derivation:** Argon2id (64 MiB memory, 3 iterations, 4 lanes) — ~2s on modern hardware
 - **Secret Sharing:** 2-of-3 threshold scheme
 
-### File Format (v1)
+### File Format (v2)
 
 **Encrypted Blob:**
 ```
-PARCELA1     (8 bytes magic)
+PARCELA2     (8 bytes magic)
+<salt>       (32 bytes, random for Argon2id)
 <nonce>      (12 bytes)
 <ciphertext> (AES-256-GCM encrypted data)
 ```
+
+> **Note:** Legacy PARCELA1 files (SHA-256 key derivation) are still readable for backwards compatibility.
 
 **Share File:**
 ```

@@ -64,6 +64,34 @@ const fbDeleteBtn = document.getElementById("fb-delete");
 let pendingOpenPath = "";
 let pendingSavePath = "";
 
+// Loading overlay elements
+const loadingOverlay = document.getElementById("loading-overlay");
+const loadingTitle = document.getElementById("loading-title");
+
+function showLoading(message = "Deriving encryption key…") {
+  console.log("[Parcela] showLoading:", message);
+  loadingTitle.textContent = message;
+  loadingOverlay.classList.remove("hidden");
+  // Force display in case CSS class isn't working
+  loadingOverlay.style.display = "flex";
+}
+
+function hideLoading() {
+  console.log("[Parcela] hideLoading");
+  loadingOverlay.classList.add("hidden");
+  loadingOverlay.style.display = "none";
+}
+
+// Helper to ensure loading overlay is rendered before heavy computation
+function waitForPaint() {
+  return new Promise((resolve) => {
+    // Use setTimeout as fallback for environments where rAF might not work as expected
+    requestAnimationFrame(() => {
+      setTimeout(resolve, 50);
+    });
+  });
+}
+
 function setStatus(message, kind = "") {
   statusEl.textContent = message;
   statusEl.className = "status";
@@ -550,10 +578,13 @@ async function handleOpenVault() {
 
   try {
     setStatus("Opening vault...");
+    showLoading("Unlocking vault…");
+    await waitForPaint();
     const vault = await invoke("open_vault", {
       path: pendingOpenPath,
       password,
     });
+    hideLoading();
     state.vaultPath = pendingOpenPath;
     state.vaultPassword = password;
     state.vault = vault;
@@ -583,6 +614,7 @@ async function handleOpenVault() {
     showVaultScreen();
     setStatus("Vault open.", "success");
   } catch (err) {
+    hideLoading();
     setStatus(`Error: ${err}`, "error");
   }
 }
@@ -596,10 +628,13 @@ async function handleCreateVault() {
 
   try {
     setStatus("Creating vault...");
+    showLoading("Creating vault…");
+    await waitForPaint();
     const vault = await invoke("create_vault", {
       path: pendingSavePath,
       password,
     });
+    hideLoading();
     state.vaultPath = pendingSavePath;
     state.vaultPassword = password;
     state.vault = vault;
@@ -610,6 +645,7 @@ async function handleCreateVault() {
     showVaultScreen();
     setStatus("Vault created.", "success");
   } catch (err) {
+    hideLoading();
     setStatus(`Error: ${err}`, "error");
   }
 }
@@ -623,11 +659,14 @@ async function handleAddFile() {
     if (!outDir) return;
 
     setStatus("Encrypting and splitting...");
+    showLoading("Encrypting file…");
+    await waitForPaint();
     const sharePaths = await invoke("split_file", {
       inputPath,
       outDir,
       password: state.vaultPassword,
     });
+    hideLoading();
 
     const name = getFileName(inputPath);
     const shares = [null, null, null];
@@ -645,6 +684,7 @@ async function handleAddFile() {
     renderDetail();
     setStatus("File added to vault.", "success");
   } catch (err) {
+    hideLoading();
     setStatus(`Error: ${err}`, "error");
   }
 }
@@ -701,14 +741,18 @@ async function handleRecoverFile() {
     if (!outputPath) return;
 
     setStatus("Recovering file...");
+    showLoading("Decrypting file…");
+    await waitForPaint();
     const recovered = await invoke("combine_shares", {
       sharePaths: availablePaths.slice(0, 2),
       outputPath,
       password: state.vaultPassword,
     });
+    hideLoading();
     showRecoveredResult([recovered], []);
     setStatus("File recovered.", "success");
   } catch (err) {
+    hideLoading();
     setResultText(`Error: ${err}`);
     setStatus("Recovery failed.", "error");
   }
@@ -749,12 +793,15 @@ async function handleCreateVirtualDrive() {
     if (!outDir) return;
 
     setStatus("Creating virtual drive...");
+    showLoading("Creating virtual drive…");
+    await waitForPaint();
     const driveInfo = await invoke("create_virtual_drive", {
       name: name.trim(),
       sizeMb,
       outDir,
       password: state.vaultPassword,
     });
+    hideLoading();
 
     // Add to vault
     if (!state.vault.virtual_drives) {
@@ -771,6 +818,7 @@ async function handleCreateVirtualDrive() {
     renderDetail();
     setStatus("Virtual drive created.", "success");
   } catch (err) {
+    hideLoading();
     setStatus(`Error: ${err}`, "error");
   }
 }
@@ -791,10 +839,13 @@ async function handleUnlockDrive() {
 
   try {
     setStatus("Unlocking drive...");
+    showLoading("Unlocking drive…");
+    await waitForPaint();
     const unlockInfo = await invoke("unlock_virtual_drive", {
       sharePaths: availablePaths.slice(0, 2),
       password: state.vaultPassword,
     });
+    hideLoading();
 
     state.unlockedDrives.set(unlockInfo.drive_id, {
       mount_path: unlockInfo.mount_path,
@@ -806,6 +857,7 @@ async function handleUnlockDrive() {
     setResultText(`Drive unlocked at: ${unlockInfo.mount_path}`);
     setStatus("Drive unlocked.", "success");
   } catch (err) {
+    hideLoading();
     setResultText(`Error: ${err}`);
     setStatus("Unlock failed.", "error");
   }
@@ -820,11 +872,14 @@ async function handleLockDrive() {
 
   try {
     setStatus("Locking drive...");
+    showLoading("Locking drive…");
+    await waitForPaint();
     await invoke("lock_virtual_drive", {
       driveId: drive.id,
       sharePaths: drive.shares,
       password: state.vaultPassword,
     });
+    hideLoading();
 
     state.unlockedDrives.delete(drive.id);
     renderFileList();
@@ -832,6 +887,7 @@ async function handleLockDrive() {
     setResultText("Drive locked and content saved.");
     setStatus("Drive locked.", "success");
   } catch (err) {
+    hideLoading();
     setResultText(`Error: ${err}`);
     setStatus("Lock failed.", "error");
   }
@@ -1139,6 +1195,8 @@ async function handleRecoverSelected() {
   if (!outputDir) return;
 
   setStatus("Recovering selected files...");
+  showLoading("Decrypting files…");
+  await waitForPaint();
   const recoveredPaths = [];
   const errors = [];
 
@@ -1162,6 +1220,7 @@ async function handleRecoverSelected() {
       errors.push(`${file.name}: ${err}`);
     }
   }
+  hideLoading();
 
   showRecoveredResult(recoveredPaths, errors);
 
