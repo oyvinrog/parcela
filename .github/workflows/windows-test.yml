@@ -35,8 +35,18 @@ jobs:
       
       - name: Install WinFsp
         run: |
-          # Download WinFsp
-          $winfspUrl = "https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.24351.msi"
+          # Get latest WinFsp release URL from GitHub API
+          $releaseInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/winfsp/winfsp/releases/latest"
+          $msiAsset = $releaseInfo.assets | Where-Object { $_.name -like "*.msi" } | Select-Object -First 1
+          
+          if (-not $msiAsset) {
+            Write-Error "Could not find WinFsp MSI in latest release"
+            exit 1
+          }
+          
+          $winfspUrl = $msiAsset.browser_download_url
+          Write-Host "Downloading WinFsp from: $winfspUrl"
+          
           $winfspMsi = "$env:TEMP\winfsp.msi"
           Invoke-WebRequest -Uri $winfspUrl -OutFile $winfspMsi
           
