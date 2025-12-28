@@ -81,10 +81,28 @@ fn move_file(source: String, dest_folder: String) -> Result<String, String> {
     
     let dest_path = std::path::Path::new(&dest_folder).join(filename);
     
-    std::fs::rename(&source_path, &dest_path)
-        .map_err(|e| format!("Failed to move file: {}", e))?;
-    
-    Ok(dest_path.to_string_lossy().to_string())
+    // Try rename first (fast path for same filesystem)
+    match std::fs::rename(&source_path, &dest_path) {
+        Ok(()) => Ok(dest_path.to_string_lossy().to_string()),
+        Err(e) => {
+            // Check for cross-device link error and fall back to copy-then-delete
+            // - Unix/Linux: EXDEV = 18
+            // - Windows: ERROR_NOT_SAME_DEVICE = 17
+            let is_cross_device = e.kind() == std::io::ErrorKind::CrossesDevices
+                || (cfg!(unix) && e.raw_os_error() == Some(18))
+                || (cfg!(windows) && e.raw_os_error() == Some(17));
+            
+            if is_cross_device {
+                std::fs::copy(&source_path, &dest_path)
+                    .map_err(|e| format!("Failed to copy file: {}", e))?;
+                std::fs::remove_file(&source_path)
+                    .map_err(|e| format!("Failed to remove original file after copy: {}", e))?;
+                Ok(dest_path.to_string_lossy().to_string())
+            } else {
+                Err(format!("Failed to move file: {}", e))
+            }
+        }
+    }
 }
 
 #[tauri::command]
