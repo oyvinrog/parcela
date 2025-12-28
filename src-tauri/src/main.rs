@@ -486,10 +486,23 @@ fn get_unlocked_drives() -> Vec<UnlockedDriveInfo> {
 }
 
 /// Check if the platform uses memory-only mode for virtual drives.
-/// On Windows, virtual drives are kept in memory only (no actual directory on disk).
+/// 
+/// Returns true if the platform cannot mount a native filesystem:
+/// - Windows without WinFsp installed
+/// 
+/// Returns false when native browsing is available:
+/// - Linux/macOS (tmpfs directory)
+/// - Windows with WinFsp (real drive letter)
 #[tauri::command]
 fn uses_memory_mode() -> bool {
     parcela::uses_memory_mode()
+}
+
+/// Check if WinFsp is available on Windows.
+/// Always returns false on non-Windows platforms.
+#[tauri::command]
+fn is_winfsp_available() -> bool {
+    parcela::is_winfsp_available()
 }
 
 // =============================================================================
@@ -581,6 +594,33 @@ fn vdrive_import_file(drive_id: String, dest_path: String) -> Result<String, Str
     Ok(full_dest)
 }
 
+/// Delete multiple files from the filesystem
+#[tauri::command]
+fn delete_files(paths: Vec<String>) -> Result<(), String> {
+    for path in paths {
+        if path.is_empty() {
+            continue;
+        }
+        let path = std::path::Path::new(&path);
+        // Skip non-existent paths silently
+        if !path.exists() {
+            continue;
+        }
+        // Verify the path is a regular file before attempting deletion
+        let metadata = std::fs::metadata(path)
+            .map_err(|e| format!("Failed to read metadata for {}: {}", path.display(), e))?;
+        if !metadata.is_file() {
+            return Err(format!(
+                "Refusing to delete non-file path: {}",
+                path.display()
+            ));
+        }
+        std::fs::remove_file(path)
+            .map_err(|e| format!("Failed to delete {}: {}", path.display(), e))?;
+    }
+    Ok(())
+}
+
 /// Export a file from the virtual drive to disk
 #[tauri::command]
 fn vdrive_export_file(drive_id: String, path: String) -> Result<String, String> {
@@ -628,6 +668,7 @@ fn main() {
             get_drive_mount_path,
             get_unlocked_drives,
             uses_memory_mode,
+            is_winfsp_available,
             // Virtual drive file browser commands
             vdrive_list_files,
             vdrive_read_file,
@@ -635,7 +676,8 @@ fn main() {
             vdrive_delete_file,
             vdrive_create_dir,
             vdrive_import_file,
-            vdrive_export_file
+            vdrive_export_file,
+            delete_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
