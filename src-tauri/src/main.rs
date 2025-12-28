@@ -380,7 +380,7 @@ struct UnlockedDriveInfo {
     drive_id: String,
     name: String,
     mount_path: String,
-    /// True if using native filesystem (WinFsp on Windows, tmpfs on Linux)
+    /// True if using native filesystem (ProjFS on Windows, tmpfs on Linux)
     /// False if using in-memory mode (no native filesystem browsing)
     uses_native_fs: bool,
 }
@@ -497,80 +497,80 @@ fn get_unlocked_drives() -> Vec<UnlockedDriveInfo> {
 }
 
 /// Check if the platform uses memory-only mode for virtual drives.
-/// 
+///
 /// Returns true if the platform cannot mount a native filesystem:
-/// - Windows without WinFsp installed
-/// 
+/// - Windows without ProjFS enabled
+///
 /// Returns false when native browsing is available:
 /// - Linux/macOS (tmpfs directory)
-/// - Windows with WinFsp (real drive letter)
+/// - Windows with ProjFS (projected filesystem)
 #[tauri::command]
 fn uses_memory_mode() -> bool {
     parcela::uses_memory_mode()
 }
 
-/// Check if WinFsp is available on Windows.
+/// Check if ProjFS is available on Windows.
 /// Always returns false on non-Windows platforms.
 #[tauri::command]
-fn is_winfsp_available() -> bool {
-    parcela::is_winfsp_available()
-}
-
-/// Get detailed WinFsp status for debugging
-#[tauri::command]
-fn get_winfsp_status() -> WinfspStatus {
+fn is_projfs_available() -> bool {
     #[cfg(target_os = "windows")]
     {
-        let is_available = parcela::is_winfsp_available();
+        parcela::is_projfs_available()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
+}
+
+/// Get detailed ProjFS status for debugging
+#[tauri::command]
+fn get_projfs_status() -> ProjfsStatus {
+    #[cfg(target_os = "windows")]
+    {
+        let is_available = parcela::is_projfs_available();
         let uses_memory = parcela::uses_memory_mode();
-        
-        // Check common installation paths
-        let paths_to_check = [
-            std::env::var("ProgramFiles")
-                .map(|pf| format!("{}\\WinFsp\\bin\\winfsp-x64.dll", pf))
-                .unwrap_or_default(),
-            std::env::var("ProgramFiles(x86)")
-                .map(|pf| format!("{}\\WinFsp\\bin\\winfsp-x86.dll", pf))
-                .unwrap_or_default(),
-            "C:\\Program Files\\WinFsp\\bin\\winfsp-x64.dll".to_string(),
-        ];
-        
-        let found_path = paths_to_check.iter()
-            .filter(|p| !p.is_empty())
-            .find(|p| std::path::Path::new(p).exists())
-            .cloned();
-        
-        WinfspStatus {
+
+        // Check if ProjFS DLL exists
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+        let dll_path = format!("{}\\System32\\projectedfslib.dll", system_root);
+        let found_path = if std::path::Path::new(&dll_path).exists() {
+            Some(dll_path)
+        } else {
+            None
+        };
+
+        ProjfsStatus {
             platform: "windows".to_string(),
             is_available,
             uses_memory_mode: uses_memory,
-            winfsp_path: found_path,
+            projfs_path: found_path,
             message: if is_available {
-                "WinFsp is installed and available".to_string()
+                "ProjFS is enabled and available".to_string()
             } else {
-                "WinFsp not found. Install from https://winfsp.dev/ for native drive mounting".to_string()
+                "ProjFS not enabled. Run: Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS".to_string()
             },
         }
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
-        WinfspStatus {
+        ProjfsStatus {
             platform: if cfg!(target_os = "macos") { "macos" } else { "linux" }.to_string(),
             is_available: false,
             uses_memory_mode: false,
-            winfsp_path: None,
-            message: "Native filesystem support (tmpfs) - no WinFsp needed".to_string(),
+            projfs_path: None,
+            message: "Native filesystem support (tmpfs) - no ProjFS needed".to_string(),
         }
     }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct WinfspStatus {
+struct ProjfsStatus {
     platform: String,
     is_available: bool,
     uses_memory_mode: bool,
-    winfsp_path: Option<String>,
+    projfs_path: Option<String>,
     message: String,
 }
 
@@ -737,8 +737,8 @@ fn main() {
             get_drive_mount_path,
             get_unlocked_drives,
             uses_memory_mode,
-            is_winfsp_available,
-            get_winfsp_status,
+            is_projfs_available,
+            get_projfs_status,
             // Virtual drive file browser commands
             vdrive_list_files,
             vdrive_read_file,

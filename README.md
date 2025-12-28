@@ -86,12 +86,16 @@ cargo tauri dev
 
 The virtual drive feature creates a browsable encrypted filesystem:
 
-- **Windows**: Uses [WinFsp](https://winfsp.dev/) to mount as a real drive letter (e.g., `P:\`)
+- **Windows**: Uses ProjFS (Windows Projected File System) to create a virtual directory
 - **macOS/Linux**: Uses a tmpfs-backed directory in `/tmp`
 
 Files exist only in RAM — nothing is written to disk unencrypted.
 
-> **Note**: On Windows, install WinFsp for the best experience. Without it, a built-in file browser is used instead.
+> **Note**: On Windows, enable ProjFS for the best experience:
+> ```powershell
+> Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS
+> ```
+> Without it, a built-in file browser is used instead.
 
 ---
 
