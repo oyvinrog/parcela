@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Mutex, RwLock};
 use std::time::SystemTime;
 
 use winfsp::error::Result as FspResult;
@@ -475,7 +475,7 @@ impl FileSystemContext for ParcelaFs {
 
 /// State for a mounted WinFsp filesystem
 pub struct WinfspMount {
-    _host: FileSystemHost<ParcelaFs>,
+    host: FileSystemHost<ParcelaFs>,
     drive_letter: char,
 }
 
@@ -500,7 +500,7 @@ impl WinfspMount {
         let drive_letter = Self::find_available_drive_letter()
             .ok_or_else(|| "No available drive letter".to_string())?;
         
-        let context = Arc::new(ParcelaFs::new(fs, volume_label.to_string()));
+        let context = ParcelaFs::new(fs, volume_label.to_string());
         
         let mut params = VolumeParams::default();
         params.set_sector_size(512);
@@ -521,14 +521,17 @@ impl WinfspMount {
         params.set_prefix("");
         params.set_file_system_name("Parcela");
         
-        let host = FileSystemHost::new(params, context)
+        let mut host = FileSystemHost::new(params, context)
             .map_err(|e| format!("Failed to create filesystem host: {:?}", e))?;
         
         let mount_point = format!("{}:", drive_letter);
         host.mount(&mount_point)
             .map_err(|e| format!("Failed to mount at {}: {:?}", mount_point, e))?;
         
-        Ok(WinfspMount { _host: host, drive_letter })
+        host.start()
+            .map_err(|e| format!("Failed to start filesystem dispatcher: {:?}", e))?;
+        
+        Ok(WinfspMount { host, drive_letter })
     }
 
     /// Get the mount path (e.g., "P:\")
@@ -539,6 +542,12 @@ impl WinfspMount {
     /// Get the drive letter
     pub fn drive_letter(&self) -> char {
         self.drive_letter
+    }
+
+    /// Unmount the filesystem
+    pub fn unmount(&mut self) {
+        self.host.stop();
+        self.host.unmount();
     }
 }
 
