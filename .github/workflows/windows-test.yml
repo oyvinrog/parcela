@@ -33,33 +33,22 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
       
-      - name: Install WinFsp
+      - name: Install WinFsp via Chocolatey
         run: |
-          # Get latest WinFsp release URL from GitHub API
-          $releaseInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/winfsp/winfsp/releases/latest"
-          $msiAsset = $releaseInfo.assets | Where-Object { $_.name -like "*.msi" } | Select-Object -First 1
-          
-          if (-not $msiAsset) {
-            Write-Error "Could not find WinFsp MSI in latest release"
-            exit 1
-          }
-          
-          $winfspUrl = $msiAsset.browser_download_url
-          Write-Host "Downloading WinFsp from: $winfspUrl"
-          
-          $winfspMsi = "$env:TEMP\winfsp.msi"
-          Invoke-WebRequest -Uri $winfspUrl -OutFile $winfspMsi
-          
-          # Install silently
-          Start-Process msiexec.exe -Wait -ArgumentList "/i $winfspMsi /quiet /norestart"
+          choco install -y winfsp
           
           # Verify installation
           if (Test-Path "C:\Program Files\WinFsp\bin\winfsp-x64.dll") {
             Write-Host "✓ WinFsp installed successfully"
+          } elseif (Test-Path "C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll") {
+            Write-Host "✓ WinFsp installed successfully (x86 path)"
           } else {
-            Write-Error "✗ WinFsp installation failed"
+            Write-Error "✗ WinFsp installation failed - DLL not found"
             exit 1
           }
+          
+          # Set environment variables for WinFsp headers (needed for compilation)
+          echo "CPATH=C:\Program Files\WinFsp\inc\fuse;C:\Program Files (x86)\WinFsp\inc\fuse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         shell: pwsh
 
       - name: Build
@@ -70,7 +59,6 @@ jobs:
       
       - name: Run WinFsp integration tests
         run: cargo test --test winfsp_integration -- --ignored --nocapture
-        continue-on-error: true  # WinFsp tests may need special permissions in CI
       
       - name: Check clippy
         run: cargo clippy -- -D warnings
