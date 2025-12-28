@@ -401,38 +401,50 @@ async fn lock_virtual_drive(
         return Err(e.to_string());
     }
 
-    // Do the heavy crypto work in a blocking thread
-    let save_result = tauri::async_runtime::spawn_blocking(move || {
-        let encoded = state.drive.encode().map_err(|e| e.to_string())?;
-        let encrypted = parcela::encrypt(&encoded, &password).map_err(|e| e.to_string())?;
+    // Do the heavy crypto work in a blocking thread.
+    // On failure, the state is returned so we can re-insert it and preserve user data.
+    let result: Result<(), (UnlockedDriveState, String)> =
+        tauri::async_runtime::spawn_blocking(move || {
+            let encoded = match state.drive.encode() {
+                Ok(e) => e,
+                Err(e) => return Err((state, e.to_string())),
+            };
+            let encrypted = match parcela::encrypt(&encoded, &password) {
+                Ok(e) => e,
+                Err(e) => return Err((state, e.to_string())),
+            };
 
-        // Re-split into shares
-        let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
+            // Re-split into shares
+            let shares = match parcela::split_shares(&encrypted) {
+                Ok(s) => s,
+                Err(e) => return Err((state, e.to_string())),
+            };
 
-        // Save to the existing share locations
-        for share in shares.iter() {
-            let idx = (share.index - 1) as usize;
-            if let Some(path) = &share_paths[idx] {
-                let data = parcela::encode_share(share);
-                std::fs::write(path, data).map_err(|e| e.to_string())?;
+            // Save to the existing share locations
+            for share in shares.iter() {
+                let idx = (share.index - 1) as usize;
+                if let Some(path) = &share_paths[idx] {
+                    let data = parcela::encode_share(share);
+                    if let Err(e) = std::fs::write(path, data) {
+                        return Err((state, e.to_string()));
+                    }
+                }
             }
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+    match result {
+        Ok(()) => Ok(()),
+        Err((state, e)) => {
+            // Re-insert the state so user can retry saving
+            if let Ok(mut drives) = UNLOCKED_DRIVES.lock() {
+                drives.insert(drive_id, state);
+            }
+            Err(format!("failed to save shares (drive state preserved): {}", e))
         }
-        Ok::<_, String>(())
-    })
-    .await
-    .map_err(|e| e.to_string())?;
-
-    if let Err(e) = save_result {
-        // Drive is locked (removed from MOUNTED_DRIVES) but content is captured.
-        // We can't re-insert the state since it was moved into the blocking task.
-        // The user will need to re-unlock the drive from shares.
-        return Err(format!(
-            "drive locked but failed to save shares: {}",
-            e
-        ));
     }
-
-    Ok(())
 }
 
 /// Check if a virtual drive is currently unlocked
