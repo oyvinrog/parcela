@@ -78,9 +78,20 @@ cargo tauri dev
 |---------|-------------|
 | 🔐 **2-of-3 Secret Sharing** | Split files into 3 shares — any 2 can recover the original |
 | 🛡️ **AES-256-GCM Encryption** | Military-grade authenticated encryption |
-| 💾 **Virtual Drive** | RAM-backed encrypted filesystem for working with sensitive files |
+| 💾 **Virtual Drive** | RAM-backed encrypted filesystem — browse in your file manager |
 | 🖥️ **Cross-Platform GUI** | Native desktop app for Windows, macOS, and Linux |
 | ⌨️ **CLI Support** | Full command-line interface for automation |
+
+### Virtual Drive
+
+The virtual drive feature creates a browsable encrypted filesystem:
+
+- **Windows**: Uses [WinFsp](https://winfsp.dev/) to mount as a real drive letter (e.g., `P:\`)
+- **macOS/Linux**: Uses a tmpfs-backed directory in `/tmp`
+
+Files exist only in RAM — nothing is written to disk unencrypted.
+
+> **Note**: On Windows, install WinFsp for the best experience. Without it, a built-in file browser is used instead.
 
 ---
 

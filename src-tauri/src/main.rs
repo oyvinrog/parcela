@@ -486,10 +486,23 @@ fn get_unlocked_drives() -> Vec<UnlockedDriveInfo> {
 }
 
 /// Check if the platform uses memory-only mode for virtual drives.
-/// On Windows, virtual drives are kept in memory only (no actual directory on disk).
+/// 
+/// Returns true if the platform cannot mount a native filesystem:
+/// - Windows without WinFsp installed
+/// 
+/// Returns false when native browsing is available:
+/// - Linux/macOS (tmpfs directory)
+/// - Windows with WinFsp (real drive letter)
 #[tauri::command]
 fn uses_memory_mode() -> bool {
     parcela::uses_memory_mode()
+}
+
+/// Check if WinFsp is available on Windows.
+/// Always returns false on non-Windows platforms.
+#[tauri::command]
+fn is_winfsp_available() -> bool {
+    parcela::is_winfsp_available()
 }
 
 // =============================================================================
@@ -643,6 +656,7 @@ fn main() {
             get_drive_mount_path,
             get_unlocked_drives,
             uses_memory_mode,
+            is_winfsp_available,
             // Virtual drive file browser commands
             vdrive_list_files,
             vdrive_read_file,

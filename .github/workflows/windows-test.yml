@@ -1,0 +1,120 @@
+name: Windows Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          components: rustfmt, clippy
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Install WinFsp
+        run: |
+          # Download WinFsp
+          $winfspUrl = "https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.24351.msi"
+          $winfspMsi = "$env:TEMP\winfsp.msi"
+          Invoke-WebRequest -Uri $winfspUrl -OutFile $winfspMsi
+          
+          # Install silently
+          Start-Process msiexec.exe -Wait -ArgumentList "/i $winfspMsi /quiet /norestart"
+          
+          # Verify installation
+          if (Test-Path "C:\Program Files\WinFsp\bin\winfsp-x64.dll") {
+            Write-Host "✓ WinFsp installed successfully"
+          } else {
+            Write-Error "✗ WinFsp installation failed"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run unit tests
+        run: cargo test --verbose
+      
+      - name: Run WinFsp integration tests
+        run: cargo test --test winfsp_integration -- --ignored --nocapture
+        continue-on-error: true  # WinFsp tests may need special permissions in CI
+      
+      - name: Check clippy
+        run: cargo clippy -- -D warnings
+        continue-on-error: true
+
+  test-linux:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+
+  test-macos:
+    runs-on: macos-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Run tests
+        run: cargo test --verbose
+

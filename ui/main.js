@@ -1445,17 +1445,24 @@ fbNewFolderBtn.addEventListener("click", handleFBNewFolder);
 fbDownloadBtn.addEventListener("click", handleFBDownload);
 fbDeleteBtn.addEventListener("click", handleFBDelete);
 
-// Check if we're on a platform that uses memory-only mode (Windows)
-// and hide the "Open in Browser" button if so
+// Check platform capabilities for virtual drives
+// - On Linux/macOS: always show "Open in Browser" (uses tmpfs)
+// - On Windows with WinFsp: show "Open in Browser" (uses real drive letter)
+// - On Windows without WinFsp: hide "Open in Browser" (memory-only mode)
 (async function initPlatformSettings() {
   try {
     state.isMemoryMode = await invoke("uses_memory_mode");
-    if (state.isMemoryMode) {
-      // On Windows, virtual drives are memory-only; there's no directory to open
+    const winfspAvailable = await invoke("is_winfsp_available");
+    
+    if (state.isMemoryMode && !winfspAvailable) {
+      // Memory-only mode without native filesystem - hide browse button
       openDriveBtn.style.display = "none";
+      console.log("[Parcela] Running in memory-only mode (WinFsp not available)");
+    } else if (winfspAvailable) {
+      console.log("[Parcela] WinFsp available - using native drive mount");
     }
   } catch (err) {
-    console.warn("Failed to check memory mode:", err);
+    console.warn("Failed to check platform capabilities:", err);
   }
 })();
 
