@@ -478,11 +478,21 @@ function renderDetail() {
     const actions = document.createElement("div");
     actions.className = "share-actions";
 
+    // Relocate button: only enabled when share exists and is available (can be moved)
     const changeBtn = document.createElement("button");
     changeBtn.type = "button";
     changeBtn.textContent = "Relocate";
-    changeBtn.addEventListener("click", () => handleChangeShare(i, isDrive));
+    changeBtn.disabled = !entry.shares[i] || !entry.available[i];
+    changeBtn.addEventListener("click", () => handleRelocateShare(i, isDrive));
     actions.appendChild(changeBtn);
+
+    // Locate button: enabled when share path exists but file is missing (update path to new location)
+    const locateBtn = document.createElement("button");
+    locateBtn.type = "button";
+    locateBtn.textContent = "Locate";
+    locateBtn.disabled = !entry.shares[i] || entry.available[i];
+    locateBtn.addEventListener("click", () => handleLocateShare(i, isDrive));
+    actions.appendChild(locateBtn);
 
     const browseBtn = document.createElement("button");
     browseBtn.type = "button";
@@ -762,7 +772,7 @@ async function handleRecoverFile() {
   }
 }
 
-async function handleChangeShare(index, isDrive = false) {
+async function handleRelocateShare(index, isDrive = false) {
   setResultText("");
   let entry;
   if (isDrive) {
@@ -775,6 +785,11 @@ async function handleChangeShare(index, isDrive = false) {
   const currentPath = entry.shares[index];
   if (!currentPath) {
     setStatus("No share path to relocate", "error");
+    return;
+  }
+
+  if (!entry.available[index]) {
+    setStatus("Cannot relocate missing share. Use 'Locate' to find it.", "error");
     return;
   }
 
@@ -794,6 +809,48 @@ async function handleChangeShare(index, isDrive = false) {
     setStatus("Share moved successfully.", "success");
   } catch (err) {
     setStatus(`Failed to move: ${err}`, "error");
+  }
+}
+
+async function handleLocateShare(index, isDrive = false) {
+  setResultText("");
+  let entry;
+  if (isDrive) {
+    entry = (state.vault.virtual_drives || []).find((d) => d.id === state.selectedFileId);
+  } else {
+    entry = state.vault.files.find((f) => f.id === state.selectedFileId);
+  }
+  if (!entry) return;
+
+  const currentPath = entry.shares[index];
+  if (!currentPath) {
+    setStatus("No share path to locate", "error");
+    return;
+  }
+
+  const shareFilename = getFileName(currentPath);
+
+  try {
+    const newPath = await invoke("pick_input_file");
+    if (!newPath) return;
+
+    // Verify the selected file has the expected share filename
+    const selectedFilename = getFileName(newPath);
+    if (selectedFilename !== shareFilename) {
+      const proceed = confirm(
+        `Selected file "${selectedFilename}" has a different name than expected "${shareFilename}".\n\nContinue anyway?`
+      );
+      if (!proceed) return;
+    }
+
+    entry.shares[index] = newPath;
+    await refreshAvailability(entry);
+    await saveVault();
+    renderFileList();
+    renderDetail();
+    setStatus("Share location updated.", "success");
+  } catch (err) {
+    setStatus(`Failed to update location: ${err}`, "error");
   }
 }
 
