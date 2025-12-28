@@ -7,19 +7,19 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
-use winfsp::error::Result as FspResult;
 use winfsp::filesystem::{
     DirInfo, DirMarker, FileInfo, FileSecurity, FileSystemContext,
-    ModificationDescriptor, OpenFileInfo, VolumeInfo,
+    OpenFileInfo,
 };
 use winfsp::host::{FileSystemHost, VolumeParams};
+use winfsp::constants::MAX_PATH;
 use winfsp::U16CStr;
 use winfsp_sys::FILE_ACCESS_RIGHTS;
 use winfsp_sys::FILE_FLAGS_AND_ATTRIBUTES;
-use windows::Win32::Foundation::{STATUS_INVALID_DEVICE_REQUEST, STATUS_OBJECT_NAME_NOT_FOUND};
+use windows::Win32::Foundation::{STATUS_INVALID_DEVICE_REQUEST, STATUS_OBJECT_NAME_NOT_FOUND, NTSTATUS};
 
 use crate::virtual_drive::MemoryFileSystem;
 
@@ -32,8 +32,8 @@ pub struct FileHandle {
 
 /// WinFsp filesystem context wrapping our MemoryFileSystem
 pub struct ParcelaFs {
-    /// The underlying in-memory filesystem
-    fs: RwLock<MemoryFileSystem>,
+    /// The underlying in-memory filesystem (shared for extraction on unmount)
+    fs: Arc<RwLock<MemoryFileSystem>>,
     /// Open file handles
     handles: Mutex<HashMap<u64, FileHandle>>,
     /// Next handle ID
@@ -45,14 +45,19 @@ pub struct ParcelaFs {
 }
 
 impl ParcelaFs {
-    pub fn new(fs: MemoryFileSystem, volume_label: String) -> Self {
-        Self {
-            fs: RwLock::new(fs),
-            handles: Mutex::new(HashMap::new()),
-            next_handle: Mutex::new(1),
-            volume_label,
-            creation_time: SystemTime::now(),
-        }
+    pub fn new(fs: MemoryFileSystem, volume_label: String) -> (Self, Arc<RwLock<MemoryFileSystem>>) {
+        let fs_arc = Arc::new(RwLock::new(fs));
+        let fs_clone = Arc::clone(&fs_arc);
+        (
+            Self {
+                fs: fs_arc,
+                handles: Mutex::new(HashMap::new()),
+                next_handle: Mutex::new(1),
+                volume_label,
+                creation_time: SystemTime::now(),
+            },
+            fs_clone,
+        )
     }
 
     fn allocate_handle(&self, path: String, is_dir: bool) -> u64 {
@@ -155,7 +160,7 @@ impl FileSystemContext for ParcelaFs {
         file_name: &U16CStr,
         _security_descriptor: Option<&mut [c_void]>,
         _resolve_reparse_points: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
-    ) -> FspResult<FileSecurity> {
+    ) -> Result<FileSecurity, NTSTATUS> {
         let path = Self::path_to_string(file_name);
         
         // Check if path exists
@@ -175,7 +180,7 @@ impl FileSystemContext for ParcelaFs {
                 sz_security_descriptor: 0,
             })
         } else {
-            Err(STATUS_OBJECT_NAME_NOT_FOUND.into())
+            Err(STATUS_OBJECT_NAME_NOT_FOUND)
         }
     }
 
@@ -185,13 +190,13 @@ impl FileSystemContext for ParcelaFs {
         _create_options: u32,
         _granted_access: FILE_ACCESS_RIGHTS,
         file_info: &mut OpenFileInfo,
-    ) -> FspResult<Self::FileContext> {
+    ) -> Result<Self::FileContext, NTSTATUS> {
         let path = Self::path_to_string(file_name);
         
         // Root directory
         if path.is_empty() {
             let info = self.make_file_info("", true, 0);
-            file_info.set_file_info(info);
+            file_info.info = info;
             return Ok(self.allocate_handle(path, true));
         }
         
@@ -200,7 +205,7 @@ impl FileSystemContext for ParcelaFs {
         // Check if it's a file
         if let Some(content) = fs.read_file(&path) {
             let info = self.make_file_info(&path, false, content.len() as u64);
-            file_info.set_file_info(info);
+            file_info.info = info;
             drop(fs);
             return Ok(self.allocate_handle(path, false));
         }
@@ -208,12 +213,12 @@ impl FileSystemContext for ParcelaFs {
         // Check if it's a directory
         if self.dir_exists_internal(&fs, &path) {
             let info = self.make_file_info(&path, true, 0);
-            file_info.set_file_info(info);
+            file_info.info = info;
             drop(fs);
             return Ok(self.allocate_handle(path, true));
         }
         
-        Err(STATUS_OBJECT_NAME_NOT_FOUND.into())
+        Err(STATUS_OBJECT_NAME_NOT_FOUND)
     }
 
     fn close(&self, context: Self::FileContext) {
@@ -225,11 +230,11 @@ impl FileSystemContext for ParcelaFs {
         context: &Self::FileContext,
         buffer: &mut [u8],
         offset: u64,
-    ) -> FspResult<u32> {
+    ) -> Result<u32, NTSTATUS> {
         let handle = self.get_handle(*context).ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
 
         if handle.is_dir {
-            return Err(STATUS_INVALID_DEVICE_REQUEST.into());
+            return Err(STATUS_INVALID_DEVICE_REQUEST);
         }
 
         let fs = self.fs.read().unwrap();
@@ -255,11 +260,11 @@ impl FileSystemContext for ParcelaFs {
         _write_to_eof: bool,
         _constrained_io: bool,
         file_info: &mut FileInfo,
-    ) -> FspResult<u32> {
+    ) -> Result<u32, NTSTATUS> {
         let handle = self.get_handle(*context).ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
 
         if handle.is_dir {
-            return Err(STATUS_INVALID_DEVICE_REQUEST.into());
+            return Err(STATUS_INVALID_DEVICE_REQUEST);
         }
 
         let mut fs = self.fs.write().unwrap();
@@ -284,7 +289,7 @@ impl FileSystemContext for ParcelaFs {
         Ok(buffer.len() as u32)
     }
 
-    fn get_file_info(&self, context: &Self::FileContext, file_info: &mut FileInfo) -> FspResult<()> {
+    fn get_file_info(&self, context: &Self::FileContext, file_info: &mut FileInfo) -> Result<(), NTSTATUS> {
         let handle = self.get_handle(*context).ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
 
         if handle.is_dir {
@@ -303,11 +308,11 @@ impl FileSystemContext for ParcelaFs {
         _pattern: Option<&U16CStr>,
         marker: DirMarker,
         buffer: &mut [u8],
-    ) -> FspResult<u32> {
+    ) -> Result<u32, NTSTATUS> {
         let handle = self.get_handle(*context).ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
 
         if !handle.is_dir {
-            return Err(STATUS_INVALID_DEVICE_REQUEST.into());
+            return Err(STATUS_INVALID_DEVICE_REQUEST);
         }
 
         let fs = self.fs.read().unwrap();
@@ -341,13 +346,13 @@ impl FileSystemContext for ParcelaFs {
         let mut bytes_written = 0u32;
         for (name, is_dir, size) in all_entries {
             // Skip entries before the marker
-            if marker.is_some() {
+            if !marker.is_none() {
                 // For simplicity, we don't handle markers in this implementation
                 // A full implementation would track position
             }
             
             let info = self.make_file_info(&name, is_dir, size);
-            let dir_info = DirInfo::<{ winfsp::filesystem::MAX_PATH }>::new(&info, &name);
+            let dir_info = DirInfo::<{ MAX_PATH }>::new(&info, &name);
             
             let entry_size = dir_info.byte_size();
             if bytes_written as usize + entry_size > buffer.len() {
@@ -380,12 +385,12 @@ impl FileSystemContext for ParcelaFs {
         _extra_buffer: Option<&[u8]>,
         _extra_buffer_is_reparse_point: bool,
         file_info: &mut OpenFileInfo,
-    ) -> FspResult<Self::FileContext> {
+    ) -> Result<Self::FileContext, NTSTATUS> {
         let path = Self::path_to_string(file_name);
         let is_directory = (create_options & 0x1) != 0; // FILE_DIRECTORY_FILE
         
         if path.is_empty() {
-            return Err(STATUS_INVALID_DEVICE_REQUEST.into());
+            return Err(STATUS_INVALID_DEVICE_REQUEST);
         }
 
         let mut fs = self.fs.write().unwrap();
@@ -393,13 +398,13 @@ impl FileSystemContext for ParcelaFs {
         if is_directory {
             fs.create_dir_all(&path);
             let info = self.make_file_info(&path, true, 0);
-            file_info.set_file_info(info);
+            file_info.info = info;
             drop(fs);
             Ok(self.allocate_handle(path, true))
         } else {
             fs.write_file(&path, Vec::new());
             let info = self.make_file_info(&path, false, 0);
-            file_info.set_file_info(info);
+            file_info.info = info;
             drop(fs);
             Ok(self.allocate_handle(path, false))
         }
@@ -428,7 +433,7 @@ impl FileSystemContext for ParcelaFs {
         _context: &Self::FileContext,
         _file_name: &U16CStr,
         _delete_file: bool,
-    ) -> FspResult<()> {
+    ) -> Result<(), NTSTATUS> {
         // Just allow deletion; actual delete happens in cleanup
         Ok(())
     }
@@ -441,11 +446,11 @@ impl FileSystemContext for ParcelaFs {
         _allocation_size: u64,
         _extra_buffer: Option<&[u8]>,
         file_info: &mut FileInfo,
-    ) -> FspResult<()> {
+    ) -> Result<(), NTSTATUS> {
         let handle = self.get_handle(*context).ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
 
         if handle.is_dir {
-            return Err(STATUS_INVALID_DEVICE_REQUEST.into());
+            return Err(STATUS_INVALID_DEVICE_REQUEST);
         }
 
         let mut fs = self.fs.write().unwrap();
@@ -459,7 +464,7 @@ impl FileSystemContext for ParcelaFs {
         &self,
         context: Option<&Self::FileContext>,
         file_info: &mut FileInfo,
-    ) -> FspResult<()> {
+    ) -> Result<(), NTSTATUS> {
         if let Some(ctx) = context {
             if let Some(handle) = self.get_handle(*ctx) {
                 if !handle.is_dir {
@@ -477,6 +482,8 @@ impl FileSystemContext for ParcelaFs {
 pub struct WinfspMount {
     host: FileSystemHost<ParcelaFs>,
     drive_letter: char,
+    /// Shared reference to the filesystem for extraction on unmount
+    fs: Arc<RwLock<MemoryFileSystem>>,
 }
 
 impl WinfspMount {
@@ -500,26 +507,26 @@ impl WinfspMount {
         let drive_letter = Self::find_available_drive_letter()
             .ok_or_else(|| "No available drive letter".to_string())?;
         
-        let context = ParcelaFs::new(fs, volume_label.to_string());
+        let (context, fs_arc) = ParcelaFs::new(fs, volume_label.to_string());
         
         let mut params = VolumeParams::default();
-        params.set_sector_size(512);
-        params.set_sectors_per_allocation_unit(1);
-        params.set_volume_creation_time(
+        params.sector_size(512);
+        params.sectors_per_allocation_unit(1);
+        params.volume_creation_time(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
         );
-        params.set_volume_serial_number(0x12345678);
-        params.set_file_info_timeout(1000);
-        params.set_case_sensitive_search(false);
-        params.set_case_preserved_names(true);
-        params.set_unicode_on_disk(true);
-        params.set_persistent_acls(false);
-        params.set_post_cleanup_when_modified_only(true);
-        params.set_prefix("");
-        params.set_file_system_name("Parcela");
+        params.volume_serial_number(0x12345678);
+        params.file_info_timeout(1000);
+        params.case_sensitive_search(false);
+        params.case_preserved_names(true);
+        params.unicode_on_disk(true);
+        params.persistent_acls(false);
+        params.post_cleanup_when_modified_only(true);
+        params.prefix("");
+        params.filesystem_name("Parcela");
         
         let mut host = FileSystemHost::new(params, context)
             .map_err(|e| format!("Failed to create filesystem host: {:?}", e))?;
@@ -531,7 +538,7 @@ impl WinfspMount {
         host.start()
             .map_err(|e| format!("Failed to start filesystem dispatcher: {:?}", e))?;
         
-        Ok(WinfspMount { host, drive_letter })
+        Ok(WinfspMount { host, drive_letter, fs: fs_arc })
     }
 
     /// Get the mount path (e.g., "P:\")
@@ -544,10 +551,21 @@ impl WinfspMount {
         self.drive_letter
     }
 
-    /// Unmount the filesystem
-    pub fn unmount(&mut self) {
+    /// Unmount the filesystem and return the MemoryFileSystem
+    pub fn unmount(mut self) -> MemoryFileSystem {
         self.host.stop();
         self.host.unmount();
+        
+        // Extract the filesystem from the Arc
+        // Since we're consuming self, we should be the only holder of this Arc
+        // (the FileSystemHost has been stopped and dropped)
+        match Arc::try_unwrap(self.fs) {
+            Ok(rw_lock) => rw_lock.into_inner().unwrap_or_else(|e| e.into_inner()),
+            Err(arc) => {
+                // Fallback: clone the data if Arc is still shared
+                arc.read().unwrap().clone()
+            }
+        }
     }
 }
 
@@ -558,7 +576,7 @@ mod tests {
     #[test]
     fn parcela_fs_new_creates_filesystem() {
         let fs = MemoryFileSystem::new();
-        let parcela_fs = ParcelaFs::new(fs, "Test Volume".to_string());
+        let (parcela_fs, _) = ParcelaFs::new(fs, "Test Volume".to_string());
         
         assert_eq!(parcela_fs.volume_label, "Test Volume");
     }
@@ -566,7 +584,7 @@ mod tests {
     #[test]
     fn parcela_fs_allocate_handle_increments() {
         let fs = MemoryFileSystem::new();
-        let parcela_fs = ParcelaFs::new(fs, "Test".to_string());
+        let (parcela_fs, _) = ParcelaFs::new(fs, "Test".to_string());
         
         let h1 = parcela_fs.allocate_handle("file1.txt".to_string(), false);
         let h2 = parcela_fs.allocate_handle("file2.txt".to_string(), false);
@@ -580,7 +598,7 @@ mod tests {
     #[test]
     fn parcela_fs_get_handle_returns_correct_info() {
         let fs = MemoryFileSystem::new();
-        let parcela_fs = ParcelaFs::new(fs, "Test".to_string());
+        let (parcela_fs, _) = ParcelaFs::new(fs, "Test".to_string());
         
         let handle_id = parcela_fs.allocate_handle("test.txt".to_string(), false);
         let handle = parcela_fs.get_handle(handle_id).unwrap();
@@ -594,7 +612,7 @@ mod tests {
         let mut fs = MemoryFileSystem::new();
         fs.write_file("existing.txt", vec![1, 2, 3]);
         
-        let parcela_fs = ParcelaFs::new(fs, "Test".to_string());
+        let (parcela_fs, _) = ParcelaFs::new(fs, "Test".to_string());
         
         assert!(parcela_fs.file_exists("existing.txt"));
         assert!(!parcela_fs.file_exists("nonexistent.txt"));
@@ -606,7 +624,7 @@ mod tests {
         fs.create_dir_all("mydir/subdir");
         fs.write_file("mydir/file.txt", vec![1, 2, 3]);
         
-        let parcela_fs = ParcelaFs::new(fs, "Test".to_string());
+        let (parcela_fs, _) = ParcelaFs::new(fs, "Test".to_string());
         
         assert!(parcela_fs.dir_exists("mydir"));
         assert!(parcela_fs.dir_exists("")); // Root always exists

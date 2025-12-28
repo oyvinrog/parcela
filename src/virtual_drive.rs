@@ -647,17 +647,8 @@ pub fn lock_drive(drive: &mut VirtualDrive) -> Result<(), VirtualDriveError> {
     {
         if let Some(winfsp_mount) = state.winfsp_mount {
             // WinFsp mode: unmount and capture the filesystem
-            match winfsp_mount.unmount() {
-                Ok(fs) => {
-                    drive.content = fs.to_archive();
-                }
-                Err(e) => {
-                    return Err(VirtualDriveError::MountError(format!(
-                        "failed to unmount WinFsp: {}",
-                        e
-                    )));
-                }
-            }
+            let fs = winfsp_mount.unmount();
+            drive.content = fs.to_archive();
         } else if let Some(mut memory_fs) = state.memory_fs {
             // Memory-only mode: capture from memory
             drive.content = memory_fs.to_archive();
