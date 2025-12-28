@@ -1023,7 +1023,7 @@ async function handleDeleteEntry(entryId, entryType) {
       return;
     }
   } else {
-    entry = state.vault.files.find((f) => f.id === entryId);
+    entry = (state.vault.files || []).find((f) => f.id === entryId);
     entryLabel = "file";
   }
 
@@ -1054,9 +1054,9 @@ async function handleDeleteEntry(entryId, entryType) {
 
     // Remove from vault state
     if (entryType === "drive") {
-      state.vault.virtual_drives = state.vault.virtual_drives.filter((d) => d.id !== entryId);
+      state.vault.virtual_drives = (state.vault.virtual_drives || []).filter((d) => d.id !== entryId);
     } else {
-      state.vault.files = state.vault.files.filter((f) => f.id !== entryId);
+      state.vault.files = (state.vault.files || []).filter((f) => f.id !== entryId);
       state.selectedFileIds.delete(entryId);
     }
 
