@@ -102,32 +102,59 @@ jobs:
           Write-Host "`nPATH entries with WinFsp:"
           $env:PATH -split ';' | Where-Object { $_ -match 'WinFsp' } | ForEach-Object { Write-Host "  $_" }
           
-          # Verify DLL exists
-          $dllPath = "C:\Program Files\WinFsp\bin\winfsp-x64.dll"
-          if (Test-Path $dllPath) {
-            Write-Host "`n✓ WinFsp DLL exists at: $dllPath"
-            
-            # Get DLL info
-            $dll = Get-Item $dllPath
+          # Get install dir from environment (set in previous step)
+          $winfspDir = $env:WINFSP_INSTALL_DIR
+          Write-Host "`nWINFSP_INSTALL_DIR: $winfspDir"
+          
+          if (-not $winfspDir) {
+            Write-Error "WINFSP_INSTALL_DIR not set"
+            exit 1
+          }
+          
+          # Check for DLL - try both x64 and x86
+          $dllPaths = @(
+            "$winfspDir\bin\winfsp-x64.dll",
+            "$winfspDir\bin\winfsp-x86.dll"
+          )
+          
+          $foundDll = $null
+          foreach ($dllPath in $dllPaths) {
+            if (Test-Path $dllPath) {
+              $foundDll = $dllPath
+              break
+            }
+          }
+          
+          if ($foundDll) {
+            Write-Host "`n✓ WinFsp DLL found at: $foundDll"
+            $dll = Get-Item $foundDll
             Write-Host "  Size: $($dll.Length) bytes"
             Write-Host "  Modified: $($dll.LastWriteTime)"
           } else {
-            Write-Error "✗ WinFsp DLL not found at: $dllPath"
+            Write-Error "✗ WinFsp DLL not found in: $winfspDir\bin\"
+            Get-ChildItem "$winfspDir\bin\" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  Found: $_" }
             exit 1
           }
           
           # Verify bin directory is in PATH
-          $binPath = "C:\Program Files\WinFsp\bin"
-          if ($env:PATH -split ';' -contains $binPath) {
-            Write-Host "✓ WinFsp bin directory is in PATH"
+          $binPath = "$winfspDir\bin"
+          $pathEntries = $env:PATH -split ';'
+          if ($pathEntries -contains $binPath) {
+            Write-Host "✓ WinFsp bin directory is in PATH: $binPath"
           } else {
-            Write-Host "⚠ WinFsp bin directory not found in PATH, adding it now..."
-            $env:PATH = "$binPath;$env:PATH"
+            Write-Host "⚠ WinFsp bin directory not in PATH array, checking substring..."
+            if ($env:PATH -match [regex]::Escape($binPath)) {
+              Write-Host "✓ WinFsp bin found in PATH (substring match)"
+            } else {
+              Write-Error "✗ WinFsp bin directory NOT in PATH: $binPath"
+              exit 1
+            }
           }
           
-          Write-Host "`n=== WinFsp Environment Variables ==="
+          Write-Host "`n=== Environment Summary ==="
           Write-Host "WINFSP_INSTALL_DIR: $env:WINFSP_INSTALL_DIR"
           Write-Host "CPATH: $env:CPATH"
+          Write-Host "DLL: $foundDll"
         shell: pwsh
 
       - name: Build
