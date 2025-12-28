@@ -120,20 +120,20 @@ impl ParcelaFs {
         let now = self.filetime_now();
         let creation = self.filetime_from_systime(self.creation_time);
         
-        let mut info = FileInfo::default();
-        info.file_attributes = if is_dir {
-            0x10 // FILE_ATTRIBUTE_DIRECTORY
-        } else {
-            0x80 // FILE_ATTRIBUTE_NORMAL
-        };
-        info.file_size = size;
-        info.allocation_size = (size + 4095) & !4095; // Round up to 4KB
-        info.creation_time = creation;
-        info.last_access_time = now;
-        info.last_write_time = now;
-        info.change_time = now;
-        
-        info
+        FileInfo {
+            file_attributes: if is_dir {
+                0x10 // FILE_ATTRIBUTE_DIRECTORY
+            } else {
+                0x80 // FILE_ATTRIBUTE_NORMAL
+            },
+            file_size: size,
+            allocation_size: (size + 4095) & !4095, // Round up to 4KB
+            creation_time: creation,
+            last_access_time: now,
+            last_write_time: now,
+            change_time: now,
+            ..FileInfo::default()
+        }
     }
 
     fn filetime_now(&self) -> u64 {
