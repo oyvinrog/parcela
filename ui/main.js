@@ -26,8 +26,6 @@ const loginScreen = document.getElementById("login-screen");
 const vaultScreen = document.getElementById("vault-screen");
 
 const vaultPasswordEl = document.getElementById("vault-password");
-const vaultPathEl = document.getElementById("vault-path");
-const vaultSavePathEl = document.getElementById("vault-save-path");
 const vaultCurrentPathEl = document.getElementById("vault-current-path");
 const vaultNameEl = document.getElementById("vault-name");
 const selectAllEl = document.getElementById("select-all-files");
@@ -61,8 +59,6 @@ const fbNewFolderBtn = document.getElementById("fb-new-folder");
 const fbDownloadBtn = document.getElementById("fb-download");
 const fbDeleteBtn = document.getElementById("fb-delete");
 
-let pendingOpenPath = "";
-let pendingSavePath = "";
 
 // Loading overlay elements
 const loadingOverlay = document.getElementById("loading-overlay");
@@ -571,21 +567,25 @@ function addOrUpdateFileEntry({ name, shares }) {
 
 async function handleOpenVault() {
   const password = vaultPasswordEl.value.trim();
-  if (!pendingOpenPath || !password) {
-    setStatus("Select a vault and enter the password.", "error");
+  if (!password) {
+    setStatus("Enter the vault password.", "error");
     return;
   }
+
+  // Pick vault file
+  const vaultPath = await invoke("pick_vault_file");
+  if (!vaultPath) return;
 
   try {
     setStatus("Opening vault...");
     showLoading("Unlocking vault…");
     await waitForPaint();
     const vault = await invoke("open_vault", {
-      path: pendingOpenPath,
+      path: vaultPath,
       password,
     });
     hideLoading();
-    state.vaultPath = pendingOpenPath;
+    state.vaultPath = vaultPath;
     state.vaultPassword = password;
     state.vault = vault;
     // Ensure virtual_drives array exists
@@ -621,21 +621,25 @@ async function handleOpenVault() {
 
 async function handleCreateVault() {
   const password = vaultPasswordEl.value.trim();
-  if (!pendingSavePath || !password) {
-    setStatus("Choose a vault destination and enter a password.", "error");
+  if (!password) {
+    setStatus("Enter a password for your new vault.", "error");
     return;
   }
+
+  // Pick save location
+  const savePath = await invoke("pick_vault_save");
+  if (!savePath) return;
 
   try {
     setStatus("Creating vault...");
     showLoading("Creating vault…");
     await waitForPaint();
     const vault = await invoke("create_vault", {
-      path: pendingSavePath,
+      path: savePath,
       password,
     });
     hideLoading();
-    state.vaultPath = pendingSavePath;
+    state.vaultPath = savePath;
     state.vaultPassword = password;
     state.vault = vault;
     state.selectedFileId = null;
@@ -1257,18 +1261,12 @@ async function handleRefreshStatus() {
   }
 }
 
-document.getElementById("pick-vault").addEventListener("click", async () => {
-  const path = await invoke("pick_vault_file");
-  if (!path) return;
-  pendingOpenPath = path;
-  vaultPathEl.textContent = path;
-});
-
-document.getElementById("pick-vault-save").addEventListener("click", async () => {
-  const path = await invoke("pick_vault_save");
-  if (!path) return;
-  pendingSavePath = path;
-  vaultSavePathEl.textContent = path;
+// Enter key in password field triggers Open Vault
+vaultPasswordEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    handleOpenVault();
+  }
 });
 
 document.getElementById("open-vault").addEventListener("click", handleOpenVault);

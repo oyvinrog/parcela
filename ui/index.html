@@ -26,26 +26,12 @@
 
             <div class="field">
               <label>Vault password</label>
-              <input id="vault-password" type="password" placeholder="Passphrase" />
+              <input id="vault-password" type="password" placeholder="Enter passphrase" autofocus />
             </div>
 
-            <div class="login-grid">
-              <div class="login-block">
-                <h2>Open vault</h2>
-                <div class="row">
-                  <button id="pick-vault">Select .pva</button>
-                  <span id="vault-path" class="path">No vault selected</span>
-                </div>
-                <button id="open-vault" class="primary">Open vault</button>
-              </div>
-              <div class="login-block">
-                <h2>Create vault</h2>
-                <div class="row">
-                  <button id="pick-vault-save">Choose location</button>
-                  <span id="vault-save-path" class="path">No destination selected</span>
-                </div>
-                <button id="create-vault" class="primary">Create vault</button>
-              </div>
+            <div class="login-actions">
+              <button id="open-vault" class="primary large">Open Vault</button>
+              <button id="create-vault" class="secondary large">Create New Vault</button>
             </div>
           </div>
         </section>
