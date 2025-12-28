@@ -562,7 +562,7 @@ impl WinfspMount {
     /// List directory contents directly from the internal filesystem
     pub fn list_directory(&self, path: &str) -> Vec<String> {
         let fs = self.fs.read().unwrap();
-        fs.list_directory(path)
+        fs.list_dir(path)
     }
     
     /// Delete a file directly from the internal filesystem
