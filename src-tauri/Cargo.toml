@@ -7,6 +7,9 @@ license = "MIT"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[target.'cfg(windows)'.build-dependencies]
+winfsp = { version = "0.12", features = ["build"] }
+
 [dependencies]
 lazy_static = "1.4"
 parcela = { path = ".." }
