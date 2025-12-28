@@ -490,9 +490,15 @@ pub fn get_mount_path(drive_id: &str) -> PathBuf {
     #[cfg(target_os = "windows")]
     {
         if is_winfsp_available() {
-            // WinFsp will assign a drive letter at mount time
-            // Return a placeholder; actual path comes from get_mounted_path()
-            PathBuf::from("P:\\")
+            // WinFsp will assign a drive letter dynamically at mount time.
+            // This function cannot predict the actual drive letter - callers should
+            // use get_mounted_path(drive_id) after mounting to get the real path.
+            // We return a temp-dir-based path as a pre-mount placeholder.
+            PathBuf::from(format!(
+                "{}\\parcela-vdrive-{}",
+                std::env::temp_dir().to_string_lossy(),
+                drive_id
+            ))
         } else {
             // Fallback to temp dir for memory-only mode
             PathBuf::from(format!(

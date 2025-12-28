@@ -602,9 +602,21 @@ fn delete_files(paths: Vec<String>) -> Result<(), String> {
             continue;
         }
         let path = std::path::Path::new(&path);
-        if path.exists() {
-            std::fs::remove_file(path).map_err(|e| format!("Failed to delete {}: {}", path.display(), e))?;
+        // Skip non-existent paths silently
+        if !path.exists() {
+            continue;
         }
+        // Verify the path is a regular file before attempting deletion
+        let metadata = std::fs::metadata(path)
+            .map_err(|e| format!("Failed to read metadata for {}: {}", path.display(), e))?;
+        if !metadata.is_file() {
+            return Err(format!(
+                "Refusing to delete non-file path: {}",
+                path.display()
+            ));
+        }
+        std::fs::remove_file(path)
+            .map_err(|e| format!("Failed to delete {}: {}", path.display(), e))?;
     }
     Ok(())
 }

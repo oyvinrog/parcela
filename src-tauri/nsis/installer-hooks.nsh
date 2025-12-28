@@ -27,23 +27,23 @@
     !insertmacro CheckWinFspInstalled $WinFspInstalled
     
     ${If} $WinFspInstalled == "0"
-        ; Inform user that WinFsp will be installed
+        ; Inform user that WinFsp is recommended but not required
         MessageBox MB_YESNO|MB_ICONQUESTION \
-            "Parcela requires WinFsp for virtual drive support.$\n$\n\
-            WinFsp is not currently installed. Would you like to install it now?$\n$\n\
-            If you choose No, Parcela will work but with limited virtual drive features." \
-            IDYES install_winfsp IDNO skip_winfsp
+            "Parcela works best with WinFsp for virtual drive support.$\n$\n\
+            WinFsp is not currently installed. Would you like to open the download page?$\n$\n\
+            You can install WinFsp now or later. Parcela will continue to install either way." \
+            IDYES open_winfsp_page IDNO skip_winfsp
         
-        install_winfsp:
-            ; Note: The actual WinFsp MSI would need to be bundled with the installer
-            ; This requires downloading it during build and including it as a resource
-            ; For now, we'll open the download page
+        open_winfsp_page:
+            ; Open the WinFsp download page for the user
             ExecShell "open" "https://winfsp.dev/rel/"
-            MessageBox MB_OK "Please download and install WinFsp, then run this installer again."
-            Abort "WinFsp installation required"
+            MessageBox MB_OK "The WinFsp download page has been opened in your browser.$\n$\n\
+            You can install WinFsp now or later to enable virtual drive features.$\n$\n\
+            The Parcela installation will now continue."
+            ; Fall through to continue installation
         
         skip_winfsp:
-            ; Continue without WinFsp
+            ; Continue installation without WinFsp
     ${EndIf}
 !macroend
 
