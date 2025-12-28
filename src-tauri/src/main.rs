@@ -363,10 +363,14 @@ async fn unlock_virtual_drive(
             },
         );
 
+    // Check if this drive is using native filesystem or memory mode
+    let uses_native_fs = !parcela::is_memory_mode(&drive_id);
+    
     Ok(UnlockedDriveInfo {
         drive_id,
         name: drive_name,
         mount_path: mount_path_str,
+        uses_native_fs,
     })
 }
 
@@ -376,6 +380,9 @@ struct UnlockedDriveInfo {
     drive_id: String,
     name: String,
     mount_path: String,
+    /// True if using native filesystem (WinFsp on Windows, tmpfs on Linux)
+    /// False if using in-memory mode (no native filesystem browsing)
+    uses_native_fs: bool,
 }
 
 /// Lock a virtual drive (unmount and re-encrypt)
@@ -475,10 +482,14 @@ fn get_unlocked_drives() -> Vec<UnlockedDriveInfo> {
         .map(|drives| {
             drives
                 .iter()
-                .map(|(id, state)| UnlockedDriveInfo {
-                    drive_id: id.clone(),
-                    name: state.drive.metadata.name.clone(),
-                    mount_path: state.mount_path.clone(),
+                .map(|(id, state)| {
+                    let uses_native_fs = !parcela::is_memory_mode(id);
+                    UnlockedDriveInfo {
+                        drive_id: id.clone(),
+                        name: state.drive.metadata.name.clone(),
+                        mount_path: state.mount_path.clone(),
+                        uses_native_fs,
+                    }
                 })
                 .collect()
         })
@@ -503,6 +514,64 @@ fn uses_memory_mode() -> bool {
 #[tauri::command]
 fn is_winfsp_available() -> bool {
     parcela::is_winfsp_available()
+}
+
+/// Get detailed WinFsp status for debugging
+#[tauri::command]
+fn get_winfsp_status() -> WinfspStatus {
+    #[cfg(target_os = "windows")]
+    {
+        let is_available = parcela::is_winfsp_available();
+        let uses_memory = parcela::uses_memory_mode();
+        
+        // Check common installation paths
+        let paths_to_check = [
+            std::env::var("ProgramFiles")
+                .map(|pf| format!("{}\\WinFsp\\bin\\winfsp-x64.dll", pf))
+                .unwrap_or_default(),
+            std::env::var("ProgramFiles(x86)")
+                .map(|pf| format!("{}\\WinFsp\\bin\\winfsp-x86.dll", pf))
+                .unwrap_or_default(),
+            "C:\\Program Files\\WinFsp\\bin\\winfsp-x64.dll".to_string(),
+        ];
+        
+        let found_path = paths_to_check.iter()
+            .filter(|p| !p.is_empty())
+            .find(|p| std::path::Path::new(p).exists())
+            .cloned();
+        
+        WinfspStatus {
+            platform: "windows".to_string(),
+            is_available,
+            uses_memory_mode: uses_memory,
+            winfsp_path: found_path,
+            message: if is_available {
+                "WinFsp is installed and available".to_string()
+            } else {
+                "WinFsp not found. Install from https://winfsp.dev/ for native drive mounting".to_string()
+            },
+        }
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        WinfspStatus {
+            platform: if cfg!(target_os = "macos") { "macos" } else { "linux" }.to_string(),
+            is_available: false,
+            uses_memory_mode: false,
+            winfsp_path: None,
+            message: "Native filesystem support (tmpfs) - no WinFsp needed".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct WinfspStatus {
+    platform: String,
+    is_available: bool,
+    uses_memory_mode: bool,
+    winfsp_path: Option<String>,
+    message: String,
 }
 
 // =============================================================================
@@ -669,6 +738,7 @@ fn main() {
             get_unlocked_drives,
             uses_memory_mode,
             is_winfsp_available,
+            get_winfsp_status,
             // Virtual drive file browser commands
             vdrive_list_files,
             vdrive_read_file,

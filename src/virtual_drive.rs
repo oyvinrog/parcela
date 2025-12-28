@@ -446,21 +446,43 @@ pub fn uses_memory_mode() -> bool {
     }
 }
 
-/// Check if WinFsp is installed and available on Windows
+/// Check if WinFsp DLL files are present on Windows
+/// 
+/// Note: This only checks if the DLL files exist, not if WinFsp is properly
+/// functional. The actual availability is only confirmed when mounting.
+/// On Windows, we always attempt to use WinFsp and fall back to memory mode
+/// if it fails.
 #[cfg(target_os = "windows")]
 pub fn is_winfsp_available() -> bool {
-    // Check if WinFsp DLL can be loaded
-    // The winfsp crate uses delay-loading, so we try to check the registry or file existence
     use std::path::Path;
     
-    // Common WinFsp installation paths
-    let program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
-    let winfsp_path = Path::new(&program_files).join("WinFsp");
+    // Check multiple possible installation paths for WinFsp
+    let paths_to_check = [
+        // 64-bit installation (most common)
+        std::env::var("ProgramFiles")
+            .map(|pf| format!("{}\\WinFsp\\bin\\winfsp-x64.dll", pf))
+            .unwrap_or_default(),
+        // 32-bit installation on 64-bit Windows
+        std::env::var("ProgramFiles(x86)")
+            .map(|pf| format!("{}\\WinFsp\\bin\\winfsp-x86.dll", pf))
+            .unwrap_or_default(),
+        // Hardcoded fallbacks
+        "C:\\Program Files\\WinFsp\\bin\\winfsp-x64.dll".to_string(),
+        "C:\\Program Files (x86)\\WinFsp\\bin\\winfsp-x86.dll".to_string(),
+    ];
     
-    if winfsp_path.exists() {
-        // Check for the DLL
-        let dll_path = winfsp_path.join("bin").join("winfsp-x64.dll");
-        return dll_path.exists();
+    for path in &paths_to_check {
+        if !path.is_empty() && Path::new(path).exists() {
+            eprintln!("[Parcela] Found WinFsp DLL at: {}", path);
+            return true;
+        }
+    }
+    
+    eprintln!("[Parcela] WinFsp DLL not found. Checked paths:");
+    for path in &paths_to_check {
+        if !path.is_empty() {
+            eprintln!("  - {}", path);
+        }
     }
     
     false
@@ -554,16 +576,21 @@ pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> 
     #[cfg(target_os = "windows")]
     {
         // Try to use WinFsp for native Windows Explorer integration
-        if is_winfsp_available() {
+        let winfsp_available = is_winfsp_available();
+        eprintln!("[Parcela] WinFsp available: {}", winfsp_available);
+        
+        if winfsp_available {
             let fs = if !drive.content.is_empty() {
                 MemoryFileSystem::from_archive(&drive.content)
             } else {
                 MemoryFileSystem::new()
             };
             
+            eprintln!("[Parcela] Attempting WinFsp mount for drive: {}", drive.metadata.name);
             match WinfspMount::mount(fs, &drive.metadata.name) {
                 Ok(mount) => {
                     let mount_path = PathBuf::from(mount.mount_path());
+                    eprintln!("[Parcela] WinFsp mount successful at: {}", mount_path.display());
                     drives.insert(
                         drive_id.to_string(),
                         MountedDriveState {
@@ -577,9 +604,16 @@ pub fn unlock_drive(drive: &VirtualDrive) -> Result<PathBuf, VirtualDriveError> 
                 }
                 Err(e) => {
                     // Fall back to memory-only mode if WinFsp fails
-                    eprintln!("WinFsp mount failed, falling back to memory mode: {}", e);
+                    eprintln!("[Parcela] WinFsp mount FAILED: {}", e);
+                    eprintln!("[Parcela] Falling back to memory-only mode. To use native drive mounting:");
+                    eprintln!("  1. Ensure WinFsp is installed: https://winfsp.dev/");
+                    eprintln!("  2. Run the app as Administrator (may be required for first mount)");
+                    eprintln!("  3. Restart the application after installing WinFsp");
                 }
             }
+        } else {
+            eprintln!("[Parcela] WinFsp not available - using memory-only mode");
+            eprintln!("[Parcela] Install WinFsp for native Windows Explorer integration: https://winfsp.dev/");
         }
         
         // Fallback: memory-only mode (no native filesystem mount)

@@ -256,6 +256,7 @@ async function refreshUnlockedDrives() {
       state.unlockedDrives.set(info.drive_id, {
         mount_path: info.mount_path,
         name: info.name,
+        uses_native_fs: info.uses_native_fs,
       });
     }
   } catch (err) {
@@ -553,12 +554,24 @@ function renderDetail() {
     openDriveBtn.disabled = !isUnlocked;
 
     if (isUnlocked) {
+      const driveInfo = state.unlockedDrives.get(entry.id);
       driveStatusEl.classList.remove("hidden");
       driveMountPathEl.textContent = getDriveMountPath(entry.id) || "Unknown";
+      
+      // Update button text based on whether native FS is available
+      if (driveInfo && driveInfo.uses_native_fs) {
+        openDriveBtn.textContent = "Open in Explorer";
+        openDriveBtn.title = "Open drive in file manager";
+      } else {
+        openDriveBtn.textContent = "Browse Files";
+        openDriveBtn.title = "Browse files in the built-in file browser";
+      }
+      
       // Show file browser for unlocked drives
       loadFileBrowser(entry.id, state.fileBrowser.currentPath || "");
     } else {
       driveStatusEl.classList.add("hidden");
+      openDriveBtn.textContent = "Open in Browser";
       hideFileBrowser();
     }
   } else {
@@ -947,6 +960,7 @@ async function handleUnlockDrive() {
     state.unlockedDrives.set(unlockInfo.drive_id, {
       mount_path: unlockInfo.mount_path,
       name: unlockInfo.name,
+      uses_native_fs: unlockInfo.uses_native_fs,
     });
 
     renderFileList();
@@ -995,6 +1009,28 @@ async function handleOpenDrive() {
     (d) => d.id === state.selectedFileId
   );
   if (!drive) return;
+
+  if (!isDriveUnlocked(drive.id)) {
+    setStatus("Drive is not unlocked.", "error");
+    return;
+  }
+
+  const driveInfo = state.unlockedDrives.get(drive.id);
+  
+  // Check if this specific drive is using native filesystem
+  // (WinFsp on Windows, tmpfs on Linux/macOS)
+  if (driveInfo && !driveInfo.uses_native_fs) {
+    // Memory-only mode - scroll to the in-app file browser
+    if (fileBrowserEl && !fileBrowserEl.classList.contains("hidden")) {
+      fileBrowserEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      fileBrowserEl.classList.add("highlight-flash");
+      setTimeout(() => fileBrowserEl.classList.remove("highlight-flash"), 1500);
+      setStatus("Use the file browser below to manage drive contents.", "success");
+    } else {
+      setStatus("File browser is available when drive is unlocked.", "error");
+    }
+    return;
+  }
 
   const mountPath = getDriveMountPath(drive.id);
   if (!mountPath) {
@@ -1446,20 +1482,22 @@ fbDownloadBtn.addEventListener("click", handleFBDownload);
 fbDeleteBtn.addEventListener("click", handleFBDelete);
 
 // Check platform capabilities for virtual drives
-// - On Linux/macOS: always show "Open in Browser" (uses tmpfs)
-// - On Windows with WinFsp: show "Open in Browser" (uses real drive letter)
-// - On Windows without WinFsp: hide "Open in Browser" (memory-only mode)
+// The actual native FS availability is checked per-drive after mounting
 (async function initPlatformSettings() {
   try {
-    state.isMemoryMode = await invoke("uses_memory_mode");
-    const winfspAvailable = await invoke("is_winfsp_available");
+    const status = await invoke("get_winfsp_status");
+    console.log("[Parcela] Platform status:", status);
     
-    if (state.isMemoryMode && !winfspAvailable) {
-      // Memory-only mode without native filesystem - hide browse button
-      openDriveBtn.style.display = "none";
-      console.log("[Parcela] Running in memory-only mode (WinFsp not available)");
-    } else if (winfspAvailable) {
-      console.log("[Parcela] WinFsp available - using native drive mount");
+    if (status.platform === "windows") {
+      if (status.is_available) {
+        console.log("[Parcela] WinFsp DLL found at:", status.winfsp_path);
+        console.log("[Parcela] Will attempt native drive mount when unlocking");
+      } else {
+        console.warn("[Parcela] WinFsp DLL not found:", status.message);
+        console.log("[Parcela] Will use in-app file browser for virtual drives");
+      }
+    } else {
+      console.log("[Parcela] Platform:", status.platform, "-", status.message);
     }
   } catch (err) {
     console.warn("Failed to check platform capabilities:", err);

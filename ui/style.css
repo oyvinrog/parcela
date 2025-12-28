@@ -597,6 +597,22 @@ input:focus {
   border-radius: 16px;
   background: linear-gradient(135deg, #fafcff 0%, #f8f6f2 100%);
   overflow: hidden;
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+
+.file-browser.highlight-flash {
+  animation: flash-highlight 1.5s ease-out;
+}
+
+@keyframes flash-highlight {
+  0% {
+    box-shadow: 0 0 0 4px var(--accent);
+    border-color: var(--accent);
+  }
+  100% {
+    box-shadow: none;
+    border-color: var(--panel-border);
+  }
 }
 
 .file-browser-header {
