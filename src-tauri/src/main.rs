@@ -437,8 +437,10 @@ async fn lock_virtual_drive(
 
     match result {
         Ok(()) => Ok(()),
-        Err((state, e)) => {
-            // Re-insert the state so user can retry saving
+        Err((mut state, e)) => {
+            // Re-insert the state so user can retry saving.
+            // Clear mount_path since lock_drive already unmounted the drive.
+            state.mount_path = String::new();
             if let Ok(mut drives) = UNLOCKED_DRIVES.lock() {
                 drives.insert(drive_id, state);
             }
