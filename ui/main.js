@@ -289,7 +289,7 @@ function renderFileList() {
   // Render virtual drives first
   for (const drive of allDrives) {
     ensureAvailability(drive);
-    const item = document.createElement("button");
+    const item = document.createElement("div");
     item.className = "file-item drive-item";
     if (drive.id === state.selectedFileId && state.selectedType === "drive") {
       item.classList.add("active");
@@ -297,7 +297,6 @@ function renderFileList() {
     if (isDriveUnlocked(drive.id)) {
       item.classList.add("unlocked");
     }
-    item.type = "button";
 
     const info = document.createElement("div");
     info.className = "file-info";
@@ -339,8 +338,20 @@ function renderFileList() {
     meta.appendChild(lights);
     meta.appendChild(count);
 
+    // Delete button
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "file-delete-btn";
+    deleteBtn.textContent = "×";
+    deleteBtn.title = "Delete drive";
+    deleteBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      handleDeleteEntry(drive.id, "drive");
+    });
+
     item.appendChild(info);
     item.appendChild(meta);
+    item.appendChild(deleteBtn);
 
     item.addEventListener("click", () => {
       // Reset file browser when switching drives
@@ -360,12 +371,11 @@ function renderFileList() {
   // Render regular files
   for (const file of allFiles) {
     ensureAvailability(file);
-    const item = document.createElement("button");
+    const item = document.createElement("div");
     item.className = "file-item";
     if (file.id === state.selectedFileId && state.selectedType === "file") {
       item.classList.add("active");
     }
-    item.type = "button";
 
     const info = document.createElement("div");
     info.className = "file-info";
@@ -407,8 +417,20 @@ function renderFileList() {
     meta.appendChild(lights);
     meta.appendChild(count);
 
+    // Delete button
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "file-delete-btn";
+    deleteBtn.textContent = "×";
+    deleteBtn.title = "Delete file";
+    deleteBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      handleDeleteEntry(file.id, "file");
+    });
+
     item.appendChild(info);
     item.appendChild(meta);
+    item.appendChild(deleteBtn);
 
     item.addEventListener("click", () => {
       state.selectedFileId = file.id;
@@ -982,6 +1004,77 @@ async function handleOpenDrive() {
 
   try {
     await invoke("open_path", { path: mountPath });
+  } catch (err) {
+    setStatus(`Error: ${err}`, "error");
+  }
+}
+
+async function handleDeleteEntry(entryId, entryType) {
+  let entry;
+  let entryLabel;
+
+  if (entryType === "drive") {
+    entry = (state.vault.virtual_drives || []).find((d) => d.id === entryId);
+    entryLabel = "virtual drive";
+
+    // Check if drive is unlocked
+    if (entry && isDriveUnlocked(entry.id)) {
+      alert("Please lock the drive before deleting it.");
+      return;
+    }
+  } else {
+    entry = state.vault.files.find((f) => f.id === entryId);
+    entryLabel = "file";
+  }
+
+  if (!entry) return;
+
+  // First confirmation: delete from vault
+  if (!confirm(`Delete ${entryLabel} "${entry.name}" from vault?`)) {
+    return;
+  }
+
+  // Second question: also remove underlying share files?
+  const availableShares = entry.shares.filter((path) => path && path.trim() !== "");
+  let deleteFiles = false;
+
+  if (availableShares.length > 0) {
+    deleteFiles = confirm(
+      `Also delete the underlying share files from disk?\n\n` +
+      `This will permanently remove ${availableShares.length} share file(s).`
+    );
+  }
+
+  try {
+    // Delete share files if requested
+    if (deleteFiles && availableShares.length > 0) {
+      setStatus("Deleting share files...");
+      await invoke("delete_files", { paths: availableShares });
+    }
+
+    // Remove from vault state
+    if (entryType === "drive") {
+      state.vault.virtual_drives = state.vault.virtual_drives.filter((d) => d.id !== entryId);
+    } else {
+      state.vault.files = state.vault.files.filter((f) => f.id !== entryId);
+      state.selectedFileIds.delete(entryId);
+    }
+
+    // Clear selection if we deleted the selected item
+    if (state.selectedFileId === entryId) {
+      state.selectedFileId = null;
+    }
+
+    // Save vault
+    await saveVault();
+
+    // Re-render
+    renderFileList();
+    renderDetail();
+    updateSelectionUI();
+
+    const filesMsg = deleteFiles ? " and share files" : "";
+    setStatus(`${entryLabel.charAt(0).toUpperCase() + entryLabel.slice(1)}${filesMsg} deleted.`, "success");
   } catch (err) {
     setStatus(`Error: ${err}`, "error");
   }

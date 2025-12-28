@@ -581,6 +581,21 @@ fn vdrive_import_file(drive_id: String, dest_path: String) -> Result<String, Str
     Ok(full_dest)
 }
 
+/// Delete multiple files from the filesystem
+#[tauri::command]
+fn delete_files(paths: Vec<String>) -> Result<(), String> {
+    for path in paths {
+        if path.is_empty() {
+            continue;
+        }
+        let path = std::path::Path::new(&path);
+        if path.exists() {
+            std::fs::remove_file(path).map_err(|e| format!("Failed to delete {}: {}", path.display(), e))?;
+        }
+    }
+    Ok(())
+}
+
 /// Export a file from the virtual drive to disk
 #[tauri::command]
 fn vdrive_export_file(drive_id: String, path: String) -> Result<String, String> {
@@ -635,7 +650,8 @@ fn main() {
             vdrive_delete_file,
             vdrive_create_dir,
             vdrive_import_file,
-            vdrive_export_file
+            vdrive_export_file,
+            delete_files
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
