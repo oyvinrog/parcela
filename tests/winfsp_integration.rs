@@ -523,12 +523,12 @@ fn winfsp_set_basic_info_works() {
     // Wait a moment to ensure time difference
     std::thread::sleep(Duration::from_millis(100));
     
-    // Touch the file to update its modification time
+    // Append to the file to update its modification time
     // This triggers set_basic_info callback
     let file = fs::OpenOptions::new()
-        .write(true)
+        .append(true)  // Use append mode to add to end of file
         .open(&test_file)
-        .expect("Failed to open file for touch");
+        .expect("Failed to open file for append");
     
     // Write a byte to trigger a modification time update
     use std::io::Write;
@@ -548,10 +548,10 @@ fn winfsp_set_basic_info_works() {
     assert!(final_modified >= initial_modified, 
         "Modified time should not go backwards");
     
-    // Verify file content was updated
+    // Verify file content was appended
     let content = fs::read_to_string(&test_file).expect("Failed to read file");
-    assert!(content.starts_with("Test content!") || content.ends_with("!"),
-        "File content should contain the appended character");
+    assert_eq!(content, "Test content!",
+        "File content should be 'Test content!' after append, got: {}", content);
     
     // Clean up
     let mut drive_mut = guard.take();
