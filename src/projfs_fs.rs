@@ -70,7 +70,13 @@ impl ProjectedFileSystemSource for ParcelaProjFs {
             }
 
             if is_dir {
-                result.push(DirectoryEntry::Directory(DirectoryInfo::new(name)));
+                result.push(DirectoryEntry::Directory(DirectoryInfo {
+                    directory_name: name,
+                    directory_attributes: 0x10, // FILE_ATTRIBUTE_DIRECTORY
+                    creation_time: 0,
+                    last_access_time: 0,
+                    last_write_time: 0,
+                }));
             } else {
                 // Get file size
                 let full_path = if path_str.is_empty() {
@@ -82,7 +88,14 @@ impl ProjectedFileSystemSource for ParcelaProjFs {
                     .map(|v| v.len() as u64)
                     .unwrap_or(0);
 
-                result.push(DirectoryEntry::File(FileInfo::new(name, size)));
+                result.push(DirectoryEntry::File(FileInfo {
+                    file_name: name,
+                    file_size: size,
+                    file_attributes: 0x80, // FILE_ATTRIBUTE_NORMAL
+                    creation_time: 0,
+                    last_access_time: 0,
+                    last_write_time: 0,
+                }));
             }
         }
 
@@ -124,7 +137,7 @@ impl ProjectedFileSystemSource for ParcelaProjFs {
 /// State for a mounted ProjFS filesystem
 pub struct ProjFsMount {
     /// The projected filesystem instance
-    _projfs: ProjectedFileSystem<ParcelaProjFs>,
+    _projfs: ProjectedFileSystem,
     /// The virtualization root directory
     root_path: PathBuf,
     /// Shared reference to the filesystem for extraction on unmount
