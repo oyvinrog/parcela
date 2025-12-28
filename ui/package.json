@@ -1,0 +1,23 @@
+{
+  "name": "parcela-ui",
+  "version": "0.1.4",
+  "private": true,
+  "description": "Parcela UI tests",
+  "scripts": {
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node --experimental-vm-modules node_modules/jest/bin/jest.js --coverage"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "jsdom",
+    "testMatch": ["**/*.test.js"],
+    "transform": {},
+    "moduleFileExtensions": ["js"],
+    "setupFilesAfterEnv": ["./tests/setup.js"]
+  }
+}
+

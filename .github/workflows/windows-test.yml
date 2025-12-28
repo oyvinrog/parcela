@@ -1,4 +1,4 @@
-name: Windows Tests
+name: Cross-Platform Tests
 
 on:
   push:
@@ -11,6 +11,36 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # UI Tests (JavaScript) - runs on all platforms
+  test-ui:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ui/package.json
+      
+      - name: Install UI dependencies
+        working-directory: ui
+        run: npm ci
+      
+      - name: Run UI tests
+        working-directory: ui
+        run: npm test -- --coverage
+      
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-coverage
+          path: ui/coverage/
+          if-no-files-found: ignore
+
+  # Windows tests with WinFsp
   test-windows:
     runs-on: windows-latest
     
@@ -37,18 +67,67 @@ jobs:
         run: |
           choco install -y winfsp
           
-          # Verify installation
+          # Find WinFsp installation path
+          $winfspPath = $null
           if (Test-Path "C:\Program Files\WinFsp\bin\winfsp-x64.dll") {
-            Write-Host "✓ WinFsp installed successfully"
+            $winfspPath = "C:\Program Files\WinFsp"
+            Write-Host "✓ WinFsp installed at: $winfspPath"
           } elseif (Test-Path "C:\Program Files (x86)\WinFsp\bin\winfsp-x64.dll") {
-            Write-Host "✓ WinFsp installed successfully (x86 path)"
+            $winfspPath = "C:\Program Files (x86)\WinFsp"
+            Write-Host "✓ WinFsp installed at: $winfspPath (x86)"
           } else {
             Write-Error "✗ WinFsp installation failed - DLL not found"
             exit 1
           }
           
+          # Add WinFsp bin directory to PATH (required for DLL loading at runtime)
+          $binPath = "$winfspPath\bin"
+          Write-Host "Adding to PATH: $binPath"
+          echo "$binPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          
           # Set environment variables for WinFsp headers (needed for compilation)
-          echo "CPATH=C:\Program Files\WinFsp\inc\fuse;C:\Program Files (x86)\WinFsp\inc\fuse" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          $incPath = "$winfspPath\inc\fuse"
+          Write-Host "Setting CPATH: $incPath"
+          echo "CPATH=$incPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          
+          # Also set WINFSP_INSTALL_DIR for the winfsp crate
+          echo "WINFSP_INSTALL_DIR=$winfspPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        shell: pwsh
+      
+      - name: Verify WinFsp in PATH
+        run: |
+          Write-Host "=== Environment Verification ==="
+          
+          # Show PATH entries containing WinFsp
+          Write-Host "`nPATH entries with WinFsp:"
+          $env:PATH -split ';' | Where-Object { $_ -match 'WinFsp' } | ForEach-Object { Write-Host "  $_" }
+          
+          # Verify DLL exists
+          $dllPath = "C:\Program Files\WinFsp\bin\winfsp-x64.dll"
+          if (Test-Path $dllPath) {
+            Write-Host "`n✓ WinFsp DLL exists at: $dllPath"
+            
+            # Get DLL info
+            $dll = Get-Item $dllPath
+            Write-Host "  Size: $($dll.Length) bytes"
+            Write-Host "  Modified: $($dll.LastWriteTime)"
+          } else {
+            Write-Error "✗ WinFsp DLL not found at: $dllPath"
+            exit 1
+          }
+          
+          # Verify bin directory is in PATH
+          $binPath = "C:\Program Files\WinFsp\bin"
+          if ($env:PATH -split ';' -contains $binPath) {
+            Write-Host "✓ WinFsp bin directory is in PATH"
+          } else {
+            Write-Host "⚠ WinFsp bin directory not found in PATH, adding it now..."
+            $env:PATH = "$binPath;$env:PATH"
+          }
+          
+          Write-Host "`n=== WinFsp Environment Variables ==="
+          Write-Host "WINFSP_INSTALL_DIR: $env:WINFSP_INSTALL_DIR"
+          Write-Host "CPATH: $env:CPATH"
         shell: pwsh
 
       - name: Build
@@ -60,9 +139,74 @@ jobs:
       - name: Run WinFsp integration tests
         run: cargo test --test winfsp_integration -- --ignored --nocapture
       
+      - name: Test Tauri app builds
+        working-directory: src-tauri
+        run: cargo build --verbose
+      
+      - name: Run Tauri unit tests
+        working-directory: src-tauri
+        run: cargo test --verbose
+      
       - name: Check clippy
         run: cargo clippy -- -D warnings
         continue-on-error: true
+
+  # Windows tests WITHOUT WinFsp - verifies fallback behavior
+  # Note: These tests verify that the app builds and basic tests pass without WinFsp
+  # The winfsp integration tests are skipped entirely since they require the DLL
+  test-windows-no-winfsp:
+    runs-on: windows-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-no-winfsp-cargo-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Verify WinFsp is NOT installed
+        run: |
+          if (Test-Path "C:\Program Files\WinFsp\bin\winfsp-x64.dll") {
+            Write-Host "⚠ WinFsp is unexpectedly installed"
+          } else {
+            Write-Host "✓ WinFsp is NOT installed (expected for this test)"
+          }
+        shell: pwsh
+
+      - name: Build (should succeed without WinFsp due to delay-loading)
+        run: cargo build --verbose
+
+      # Run only tests that don't touch WinFsp code paths
+      # Skip all virtual_drive tests that might trigger WinFsp loading
+      - name: Run safe unit tests (no WinFsp)
+        run: |
+          cargo test --verbose -- `
+            --skip winfsp `
+            --skip virtual_drive::tests::unlock `
+            --skip virtual_drive::tests::lock `
+            --skip virtual_drive::tests::vdrive_operations `
+            --skip virtual_drive::tests::drive_content_persists `
+            --skip virtual_drive::tests::is_winfsp `
+            --skip virtual_drive::tests::uses_memory_mode `
+            --skip virtual_drive::tests::uses_native_fs
+        shell: pwsh
+      
+      # Skip the winfsp_integration tests entirely - they require the DLL
+      - name: Note about skipped tests
+        run: |
+          Write-Host "ℹ WinFsp integration tests skipped (WinFsp not installed)"
+          Write-Host "ℹ Run 'test-windows' job for full WinFsp testing"
+        shell: pwsh
 
   test-linux:
     runs-on: ubuntu-latest

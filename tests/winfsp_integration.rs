@@ -255,3 +255,69 @@ fn winfsp_large_file_handling() {
     lock_drive(&mut drive_mut).expect("Failed to lock");
 }
 
+/// Test that is_memory_mode correctly reflects the mount type
+/// This is critical for the UI to know whether to show "Open in Explorer" or "Browse Files"
+#[test]
+#[ignore = "Requires WinFsp installed - run with --ignored"]
+fn winfsp_mounted_drive_is_not_memory_mode() {
+    if !is_winfsp_available() {
+        println!("Skipping: WinFsp not available");
+        return;
+    }
+
+    let drive = VirtualDrive::new_with_id(
+        unique_drive_id(),
+        "Memory Mode Test".to_string(),
+        32,
+    );
+    let drive_id = drive.metadata.id.clone();
+
+    // Before mounting, drive shouldn't be mounted at all
+    assert!(!parcela::is_mounted(&drive_id), "Drive should not be mounted initially");
+
+    // After mounting with WinFsp available, should NOT be in memory mode
+    let mount_path = unlock_drive(&drive).expect("Failed to unlock drive");
+    
+    // This is the key assertion that the UI relies on
+    let is_mem = parcela::is_memory_mode(&drive_id);
+    println!("Mount path: {:?}, is_memory_mode: {}", mount_path, is_mem);
+    
+    // With WinFsp available and mount successful, should NOT be memory mode
+    assert!(!is_mem, 
+        "Drive mounted with WinFsp should NOT be in memory mode. \
+         Mount path: {:?}", mount_path);
+    
+    // The mount path should be a proper drive letter
+    let mount_str = mount_path.to_string_lossy();
+    assert!(mount_str.starts_with(|c: char| c.is_ascii_uppercase()),
+        "Expected drive letter mount, got: {}", mount_str);
+    
+    // Clean up
+    let mut drive_mut = drive;
+    lock_drive(&mut drive_mut).expect("Failed to lock drive");
+}
+
+/// Test that uses_memory_mode() returns true when WinFsp is NOT available
+/// This test doesn't require WinFsp - it tests the fallback behavior
+#[test]
+fn memory_mode_fallback_when_winfsp_unavailable() {
+    // This test runs regardless of WinFsp availability
+    // It just verifies the relationship between the two functions
+    
+    let winfsp_available = is_winfsp_available();
+    let memory_mode = uses_memory_mode();
+    
+    println!("WinFsp available: {}, uses_memory_mode: {}", winfsp_available, memory_mode);
+    
+    // On Windows: memory_mode should be the inverse of winfsp_available
+    // On other platforms: both should be false (Linux/macOS use tmpfs, not WinFsp)
+    if cfg!(target_os = "windows") {
+        assert_eq!(memory_mode, !winfsp_available,
+            "On Windows, memory_mode ({}) should be the inverse of winfsp_available ({})",
+            memory_mode, winfsp_available);
+    } else {
+        assert!(!memory_mode,
+            "On non-Windows, should not use memory mode (uses tmpfs)");
+    }
+}
+
