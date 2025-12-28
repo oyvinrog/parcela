@@ -945,8 +945,7 @@ fn capture_mount_content(mount_path: &Path) -> Result<Vec<u8>, VirtualDriveError
             let path = entry.path();
             let relative = path
                 .strip_prefix(base)
-                .map_err(|_| VirtualDriveError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                .map_err(|_| VirtualDriveError::IoError(std::io::Error::other(
                     "path prefix error",
                 )))?;
 
