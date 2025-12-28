@@ -257,7 +257,7 @@ impl FileSystemContext for ParcelaFs {
         context: &Self::FileContext,
         buffer: &[u8],
         offset: u64,
-        _write_to_eof: bool,
+        write_to_eof: bool,
         _constrained_io: bool,
         file_info: &mut FileInfo,
     ) -> FspResult<u32> {
@@ -272,14 +272,19 @@ impl FileSystemContext for ParcelaFs {
         // Get existing content or create empty
         let mut content = fs.read_file(&handle.path).cloned().unwrap_or_default();
         
-        let offset = offset as usize;
+        // Handle write_to_eof flag - append to end of file instead of using offset
+        let actual_offset = if write_to_eof {
+            content.len()
+        } else {
+            offset as usize
+        };
         
         // Extend file if needed
-        if offset + buffer.len() > content.len() {
-            content.resize(offset + buffer.len(), 0);
+        if actual_offset + buffer.len() > content.len() {
+            content.resize(actual_offset + buffer.len(), 0);
         }
         
-        content[offset..offset + buffer.len()].copy_from_slice(buffer);
+        content[actual_offset..actual_offset + buffer.len()].copy_from_slice(buffer);
         
         let new_size = content.len() as u64;
         fs.write_file(&handle.path, content);
@@ -342,13 +347,29 @@ impl FileSystemContext for ParcelaFs {
             }
         }
 
+        // Sort entries for consistent ordering (important for marker handling)
+        all_entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Get marker name to skip entries we've already returned
+        let marker_name = if marker.is_none() {
+            None
+        } else {
+            marker.name().map(|s| s.to_string_lossy())
+        };
+
         // Write entries to buffer using DirInfo
         let mut cursor = 0u32;
+        let mut past_marker = marker_name.is_none();
+        
         for (name, is_dir, size) in all_entries {
-            // Skip entries before the marker
-            if !marker.is_none() {
-                // For simplicity, we don't handle markers in this implementation
-                // A full implementation would track position
+            // Skip entries up to and including the marker
+            if !past_marker {
+                if let Some(ref marker_str) = marker_name {
+                    if &name == marker_str {
+                        past_marker = true;
+                    }
+                    continue;
+                }
             }
             
             let info = self.make_file_info(&name, is_dir, size);

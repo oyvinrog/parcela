@@ -740,3 +740,88 @@ fn winfsp_explorer_new_file_pattern() {
     lock_drive(&mut drive_mut).expect("Failed to lock drive");
 }
 
+/// Test file copy operations (cp/copy)
+/// 
+/// When copying files to the virtual drive, Windows:
+/// 1. Creates the destination file
+/// 2. Reads from source, writes to destination (possibly with write_to_eof)
+/// 3. Sets file timestamps via set_basic_info
+#[test]
+#[ignore = "Requires WinFsp installed - run with --ignored"]
+fn winfsp_copy_file_works() {
+    if !is_winfsp_available() {
+        println!("Skipping: WinFsp not available");
+        return;
+    }
+
+    let drive = VirtualDrive::new_with_id(
+        unique_drive_id(),
+        "Copy Test".to_string(),
+        32,
+    );
+    let mut guard = DriveGuard::new(drive);
+
+    let mount_path = unlock_drive(guard.drive()).expect("Failed to unlock drive");
+    
+    require_accessible_mount!(mount_path);
+    
+    // Test 1: Copy within the drive
+    let source = mount_path.join("source.txt");
+    let dest = mount_path.join("copy.txt");
+    
+    let test_content = "This is the content to copy!";
+    fs::write(&source, test_content).expect("Failed to create source file");
+    
+    fs::copy(&source, &dest).expect("Failed to copy file");
+    
+    assert!(source.exists(), "Source should still exist");
+    assert!(dest.exists(), "Destination should exist");
+    
+    let copied_content = fs::read_to_string(&dest).expect("Failed to read copy");
+    assert_eq!(copied_content, test_content, "Copied content should match");
+    
+    // Test 2: Copy into a subdirectory
+    let subdir = mount_path.join("copies");
+    fs::create_dir(&subdir).expect("Failed to create subdir");
+    
+    let dest_in_subdir = subdir.join("another_copy.txt");
+    fs::copy(&source, &dest_in_subdir).expect("Failed to copy to subdir");
+    
+    let content_in_subdir = fs::read_to_string(&dest_in_subdir).expect("Failed to read");
+    assert_eq!(content_in_subdir, test_content);
+    
+    // Test 3: Copy a larger file (tests chunked writes)
+    let large_source = mount_path.join("large_source.bin");
+    let large_dest = mount_path.join("large_copy.bin");
+    
+    // Create 100KB file
+    let large_content: Vec<u8> = (0..100_000).map(|i| (i % 256) as u8).collect();
+    fs::write(&large_source, &large_content).expect("Failed to write large file");
+    
+    fs::copy(&large_source, &large_dest).expect("Failed to copy large file");
+    
+    let large_copied = fs::read(&large_dest).expect("Failed to read large copy");
+    assert_eq!(large_copied.len(), large_content.len(), "Size should match");
+    assert_eq!(large_copied, large_content, "Content should match");
+    
+    // Test 4: Verify directory listing shows all files
+    let entries: Vec<_> = fs::read_dir(&mount_path)
+        .expect("Failed to read dir")
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    
+    println!("Directory entries: {:?}", entries);
+    assert!(entries.contains(&"source.txt".to_string()), "source.txt missing");
+    assert!(entries.contains(&"copy.txt".to_string()), "copy.txt missing");
+    assert!(entries.contains(&"copies".to_string()), "copies dir missing");
+    assert!(entries.contains(&"large_source.bin".to_string()), "large_source.bin missing");
+    assert!(entries.contains(&"large_copy.bin".to_string()), "large_copy.bin missing");
+    
+    println!("✓ All copy operations completed successfully");
+    
+    // Clean up
+    let mut drive_mut = guard.take();
+    lock_drive(&mut drive_mut).expect("Failed to lock drive");
+}
+
