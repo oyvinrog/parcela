@@ -16,10 +16,10 @@ use winfsp::filesystem::{
 };
 use winfsp::host::{FileSystemHost, VolumeParams};
 use winfsp::constants::MAX_PATH;
-use winfsp::U16CStr;
+use winfsp::{Result as FspResult, FspError, U16CStr};
 use winfsp_sys::FILE_ACCESS_RIGHTS;
 use winfsp_sys::FILE_FLAGS_AND_ATTRIBUTES;
-use windows::Win32::Foundation::{STATUS_INVALID_DEVICE_REQUEST, STATUS_OBJECT_NAME_NOT_FOUND, NTSTATUS};
+use windows::Win32::Foundation::{STATUS_INVALID_DEVICE_REQUEST, STATUS_OBJECT_NAME_NOT_FOUND};
 
 use crate::virtual_drive::MemoryFileSystem;
 
@@ -160,7 +160,7 @@ impl FileSystemContext for ParcelaFs {
         file_name: &U16CStr,
         _security_descriptor: Option<&mut [c_void]>,
         _resolve_reparse_points: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
-    ) -> Result<FileSecurity, NTSTATUS> {
+    ) -> FspResult<FileSecurity> {
         let path = Self::path_to_string(file_name);
         
         // Check if path exists
@@ -180,7 +180,7 @@ impl FileSystemContext for ParcelaFs {
                 sz_security_descriptor: 0,
             })
         } else {
-            Err(STATUS_OBJECT_NAME_NOT_FOUND)
+            Err(FspError::from(STATUS_OBJECT_NAME_NOT_FOUND))
         }
     }
 
@@ -190,13 +190,13 @@ impl FileSystemContext for ParcelaFs {
         _create_options: u32,
         _granted_access: FILE_ACCESS_RIGHTS,
         file_info: &mut OpenFileInfo,
-    ) -> Result<Self::FileContext, NTSTATUS> {
+    ) -> FspResult<Self::FileContext> {
         let path = Self::path_to_string(file_name);
         
         // Root directory
         if path.is_empty() {
             let info = self.make_file_info("", true, 0);
-            file_info.info = info;
+            *file_info.as_mut() = info;
             return Ok(self.allocate_handle(path, true));
         }
         
@@ -205,7 +205,7 @@ impl FileSystemContext for ParcelaFs {
         // Check if it's a file
         if let Some(content) = fs.read_file(&path) {
             let info = self.make_file_info(&path, false, content.len() as u64);
-            file_info.info = info;
+            *file_info.as_mut() = info;
             drop(fs);
             return Ok(self.allocate_handle(path, false));
         }
@@ -213,12 +213,12 @@ impl FileSystemContext for ParcelaFs {
         // Check if it's a directory
         if self.dir_exists_internal(&fs, &path) {
             let info = self.make_file_info(&path, true, 0);
-            file_info.info = info;
+            *file_info.as_mut() = info;
             drop(fs);
             return Ok(self.allocate_handle(path, true));
         }
         
-        Err(STATUS_OBJECT_NAME_NOT_FOUND)
+        Err(FspError::from(STATUS_OBJECT_NAME_NOT_FOUND))
     }
 
     fn close(&self, context: Self::FileContext) {
@@ -230,15 +230,15 @@ impl FileSystemContext for ParcelaFs {
         context: &Self::FileContext,
         buffer: &mut [u8],
         offset: u64,
-    ) -> Result<u32, NTSTATUS> {
-        let handle = self.get_handle(*context).ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
+    ) -> FspResult<u32> {
+        let handle = self.get_handle(*context).ok_or(FspError::from(STATUS_INVALID_DEVICE_REQUEST))?;
 
         if handle.is_dir {
-            return Err(STATUS_INVALID_DEVICE_REQUEST);
+            return Err(FspError::from(STATUS_INVALID_DEVICE_REQUEST));
         }
 
         let fs = self.fs.read().unwrap();
-        let content = fs.read_file(&handle.path).ok_or(STATUS_OBJECT_NAME_NOT_FOUND)?;
+        let content = fs.read_file(&handle.path).ok_or(FspError::from(STATUS_OBJECT_NAME_NOT_FOUND))?;
 
         let start = offset as usize;
         if start >= content.len() {
@@ -260,11 +260,11 @@ impl FileSystemContext for ParcelaFs {
         _write_to_eof: bool,
         _constrained_io: bool,
         file_info: &mut FileInfo,
-    ) -> Result<u32, NTSTATUS> {
-        let handle = self.get_handle(*context).ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
+    ) -> FspResult<u32> {
+        let handle = self.get_handle(*context).ok_or(FspError::from(STATUS_INVALID_DEVICE_REQUEST))?;
 
         if handle.is_dir {
-            return Err(STATUS_INVALID_DEVICE_REQUEST);
+            return Err(FspError::from(STATUS_INVALID_DEVICE_REQUEST));
         }
 
         let mut fs = self.fs.write().unwrap();
@@ -289,8 +289,8 @@ impl FileSystemContext for ParcelaFs {
         Ok(buffer.len() as u32)
     }
 
-    fn get_file_info(&self, context: &Self::FileContext, file_info: &mut FileInfo) -> Result<(), NTSTATUS> {
-        let handle = self.get_handle(*context).ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
+    fn get_file_info(&self, context: &Self::FileContext, file_info: &mut FileInfo) -> FspResult<()> {
+        let handle = self.get_handle(*context).ok_or(FspError::from(STATUS_INVALID_DEVICE_REQUEST))?;
 
         if handle.is_dir {
             *file_info = self.make_file_info(&handle.path, true, 0);
@@ -308,11 +308,11 @@ impl FileSystemContext for ParcelaFs {
         _pattern: Option<&U16CStr>,
         marker: DirMarker,
         buffer: &mut [u8],
-    ) -> Result<u32, NTSTATUS> {
-        let handle = self.get_handle(*context).ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
+    ) -> FspResult<u32> {
+        let handle = self.get_handle(*context).ok_or(FspError::from(STATUS_INVALID_DEVICE_REQUEST))?;
 
         if !handle.is_dir {
-            return Err(STATUS_INVALID_DEVICE_REQUEST);
+            return Err(FspError::from(STATUS_INVALID_DEVICE_REQUEST));
         }
 
         let fs = self.fs.read().unwrap();
@@ -385,12 +385,12 @@ impl FileSystemContext for ParcelaFs {
         _extra_buffer: Option<&[u8]>,
         _extra_buffer_is_reparse_point: bool,
         file_info: &mut OpenFileInfo,
-    ) -> Result<Self::FileContext, NTSTATUS> {
+    ) -> FspResult<Self::FileContext> {
         let path = Self::path_to_string(file_name);
         let is_directory = (create_options & 0x1) != 0; // FILE_DIRECTORY_FILE
         
         if path.is_empty() {
-            return Err(STATUS_INVALID_DEVICE_REQUEST);
+            return Err(FspError::from(STATUS_INVALID_DEVICE_REQUEST));
         }
 
         let mut fs = self.fs.write().unwrap();
@@ -398,13 +398,13 @@ impl FileSystemContext for ParcelaFs {
         if is_directory {
             fs.create_dir_all(&path);
             let info = self.make_file_info(&path, true, 0);
-            file_info.info = info;
+            *file_info.as_mut() = info;
             drop(fs);
             Ok(self.allocate_handle(path, true))
         } else {
             fs.write_file(&path, Vec::new());
             let info = self.make_file_info(&path, false, 0);
-            file_info.info = info;
+            *file_info.as_mut() = info;
             drop(fs);
             Ok(self.allocate_handle(path, false))
         }
@@ -433,7 +433,7 @@ impl FileSystemContext for ParcelaFs {
         _context: &Self::FileContext,
         _file_name: &U16CStr,
         _delete_file: bool,
-    ) -> Result<(), NTSTATUS> {
+    ) -> FspResult<()> {
         // Just allow deletion; actual delete happens in cleanup
         Ok(())
     }
@@ -446,11 +446,11 @@ impl FileSystemContext for ParcelaFs {
         _allocation_size: u64,
         _extra_buffer: Option<&[u8]>,
         file_info: &mut FileInfo,
-    ) -> Result<(), NTSTATUS> {
-        let handle = self.get_handle(*context).ok_or(STATUS_INVALID_DEVICE_REQUEST)?;
+    ) -> FspResult<()> {
+        let handle = self.get_handle(*context).ok_or(FspError::from(STATUS_INVALID_DEVICE_REQUEST))?;
 
         if handle.is_dir {
-            return Err(STATUS_INVALID_DEVICE_REQUEST);
+            return Err(FspError::from(STATUS_INVALID_DEVICE_REQUEST));
         }
 
         let mut fs = self.fs.write().unwrap();
@@ -464,7 +464,7 @@ impl FileSystemContext for ParcelaFs {
         &self,
         context: Option<&Self::FileContext>,
         file_info: &mut FileInfo,
-    ) -> Result<(), NTSTATUS> {
+    ) -> FspResult<()> {
         if let Some(ctx) = context {
             if let Some(handle) = self.get_handle(*ctx) {
                 if !handle.is_dir {
