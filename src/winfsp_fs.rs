@@ -433,6 +433,41 @@ impl FileSystemContext for ParcelaFs {
         Ok(())
     }
 
+    fn rename(
+        &self,
+        context: &Self::FileContext,
+        _file_name: &U16CStr,
+        new_file_name: &U16CStr,
+        replace_if_exists: bool,
+    ) -> FspResult<()> {
+        let handle = self.get_handle(*context).ok_or(FspError::from(STATUS_INVALID_DEVICE_REQUEST))?;
+        let new_path = Self::path_to_string(new_file_name);
+        
+        if new_path.is_empty() {
+            return Err(FspError::from(STATUS_INVALID_DEVICE_REQUEST));
+        }
+
+        let mut fs = self.fs.write().unwrap();
+        
+        let success = if handle.is_dir {
+            fs.rename_dir(&handle.path, &new_path)
+        } else {
+            fs.rename_file(&handle.path, &new_path, replace_if_exists)
+        };
+        
+        if success {
+            // Update the handle's path
+            drop(fs);
+            let mut handles = self.handles.lock().unwrap();
+            if let Some(h) = handles.get_mut(context) {
+                h.path = new_path;
+            }
+            Ok(())
+        } else {
+            Err(FspError::from(STATUS_OBJECT_NAME_NOT_FOUND))
+        }
+    }
+
     fn overwrite(
         &self,
         context: &Self::FileContext,
@@ -659,6 +694,12 @@ impl WinfspMount {
     pub fn create_dir_all(&self, path: &str) {
         let mut fs = self.fs.write().unwrap();
         fs.create_dir_all(path);
+    }
+    
+    /// Rename a file directly in the internal filesystem
+    pub fn rename_file(&self, old_path: &str, new_path: &str, replace_if_exists: bool) -> bool {
+        let mut fs = self.fs.write().unwrap();
+        fs.rename_file(old_path, new_path, replace_if_exists)
     }
     
     /// Unmount the filesystem and return the MemoryFileSystem

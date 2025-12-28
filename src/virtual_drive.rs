@@ -54,6 +54,85 @@ impl MemoryFileSystem {
         self.files.remove(&path).is_some()
     }
 
+    /// Rename/move a file
+    pub fn rename_file(&mut self, old_path: &str, new_path: &str, replace_if_exists: bool) -> bool {
+        let old_path = Self::normalize_path(old_path);
+        let new_path = Self::normalize_path(new_path);
+        
+        // Check if source exists
+        if !self.files.contains_key(&old_path) {
+            return false;
+        }
+        
+        // Check if destination exists and we're not allowed to replace
+        if !replace_if_exists && self.files.contains_key(&new_path) {
+            return false;
+        }
+        
+        // Move the file
+        if let Some(content) = self.files.remove(&old_path) {
+            // Ensure parent directories exist for new path
+            if let Some(parent) = Self::parent_path(&new_path) {
+                self.create_dir_all(&parent);
+            }
+            self.files.insert(new_path, content);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Rename/move a directory
+    pub fn rename_dir(&mut self, old_path: &str, new_path: &str) -> bool {
+        let old_path = Self::normalize_path(old_path);
+        let new_path = Self::normalize_path(new_path);
+        
+        let old_prefix = if old_path.ends_with('/') {
+            old_path.clone()
+        } else {
+            format!("{}/", old_path)
+        };
+        
+        let new_prefix = if new_path.ends_with('/') {
+            new_path.clone()
+        } else {
+            format!("{}/", new_path)
+        };
+        
+        // Collect files to rename (can't modify while iterating)
+        let files_to_rename: Vec<(String, Vec<u8>)> = self.files
+            .iter()
+            .filter(|(path, _)| path.starts_with(&old_prefix) || *path == &old_path)
+            .map(|(path, content)| (path.clone(), content.clone()))
+            .collect();
+        
+        if files_to_rename.is_empty() && !self.directories.contains(&old_prefix) {
+            return false;
+        }
+        
+        // Rename files
+        for (old_file_path, content) in files_to_rename {
+            self.files.remove(&old_file_path);
+            let new_file_path = old_file_path.replacen(&old_prefix, &new_prefix, 1);
+            self.files.insert(new_file_path, content);
+        }
+        
+        // Rename directories
+        let dirs_to_rename: Vec<String> = self.directories
+            .iter()
+            .filter(|path| path.starts_with(&old_prefix) || *path == &old_prefix)
+            .cloned()
+            .collect();
+        
+        for old_dir in dirs_to_rename {
+            self.directories.remove(&old_dir);
+            let new_dir = old_dir.replacen(&old_prefix, &new_prefix, 1);
+            self.directories.insert(new_dir);
+        }
+        
+        true
+    }
+
     /// Check if a file exists
     pub fn file_exists(&self, path: &str) -> bool {
         let path = Self::normalize_path(path);

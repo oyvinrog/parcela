@@ -604,6 +604,77 @@ fn winfsp_volume_info_works() {
     lock_drive(&mut drive_mut).expect("Failed to lock drive");
 }
 
+/// Test that rename callback works (required for Windows Explorer file operations)
+/// 
+/// When Windows Explorer creates "New Text Document.txt", it often:
+/// 1. Creates a temp file
+/// 2. Renames it to the final name
+/// 
+/// If rename is not implemented, users get "Invalid MS-DOS function"
+#[test]
+#[ignore = "Requires WinFsp installed - run with --ignored"]
+fn winfsp_rename_works() {
+    if !is_winfsp_available() {
+        println!("Skipping: WinFsp not available");
+        return;
+    }
+
+    let drive = VirtualDrive::new_with_id(
+        unique_drive_id(),
+        "Rename Test".to_string(),
+        32,
+    );
+    let mut guard = DriveGuard::new(drive);
+
+    let mount_path = unlock_drive(guard.drive()).expect("Failed to unlock drive");
+    
+    require_accessible_mount!(mount_path);
+    
+    // Test 1: Basic file rename
+    let original = mount_path.join("original.txt");
+    let renamed = mount_path.join("renamed.txt");
+    
+    fs::write(&original, "Test content").expect("Failed to create file");
+    assert!(original.exists(), "Original file should exist");
+    
+    fs::rename(&original, &renamed).expect("Failed to rename file");
+    
+    assert!(!original.exists(), "Original file should no longer exist");
+    assert!(renamed.exists(), "Renamed file should exist");
+    
+    let content = fs::read_to_string(&renamed).expect("Failed to read renamed file");
+    assert_eq!(content, "Test content", "Content should be preserved after rename");
+    
+    // Test 2: Rename to different directory
+    let subdir = mount_path.join("subdir");
+    fs::create_dir(&subdir).expect("Failed to create subdir");
+    
+    let moved = subdir.join("moved.txt");
+    fs::rename(&renamed, &moved).expect("Failed to move file to subdir");
+    
+    assert!(!renamed.exists(), "Source file should no longer exist");
+    assert!(moved.exists(), "Moved file should exist in subdir");
+    
+    // Test 3: Rename with replace (overwrite existing)
+    let target = mount_path.join("target.txt");
+    let source = mount_path.join("source.txt");
+    
+    fs::write(&target, "old content").expect("Failed to create target");
+    fs::write(&source, "new content").expect("Failed to create source");
+    
+    fs::rename(&source, &target).expect("Failed to rename with replace");
+    
+    assert!(!source.exists(), "Source should no longer exist");
+    let content = fs::read_to_string(&target).expect("Failed to read target");
+    assert_eq!(content, "new content", "Content should be replaced");
+    
+    println!("✓ All rename operations completed successfully");
+    
+    // Clean up
+    let mut drive_mut = guard.take();
+    lock_drive(&mut drive_mut).expect("Failed to lock drive");
+}
+
 /// Simulate Windows Explorer "New Text Document" creation pattern
 /// 
 /// This is the exact sequence that was failing with "Catastrophic failure":
