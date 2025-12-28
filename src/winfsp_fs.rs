@@ -38,7 +38,8 @@ pub struct ParcelaFs {
     handles: Mutex<HashMap<u64, FileHandle>>,
     /// Next handle ID
     next_handle: Mutex<u64>,
-    /// Volume label
+    /// Volume label (stored for potential future use in GetVolumeInfo)
+    #[allow(dead_code)]
     volume_label: String,
     /// Creation time for the volume
     creation_time: SystemTime,
@@ -546,6 +547,36 @@ impl WinfspMount {
         self.drive_letter
     }
 
+    /// Write a file directly to the internal filesystem (bypasses WinFsp callbacks)
+    pub fn write_file(&self, path: &str, content: Vec<u8>) {
+        let mut fs = self.fs.write().unwrap();
+        fs.write_file(path, content);
+    }
+    
+    /// Read a file directly from the internal filesystem (bypasses WinFsp callbacks)
+    pub fn read_file(&self, path: &str) -> Option<Vec<u8>> {
+        let fs = self.fs.read().unwrap();
+        fs.read_file(path).cloned()
+    }
+    
+    /// List directory contents directly from the internal filesystem
+    pub fn list_directory(&self, path: &str) -> Vec<String> {
+        let fs = self.fs.read().unwrap();
+        fs.list_directory(path)
+    }
+    
+    /// Delete a file directly from the internal filesystem
+    pub fn delete_file(&self, path: &str) -> bool {
+        let mut fs = self.fs.write().unwrap();
+        fs.delete_file(path)
+    }
+    
+    /// Create a directory directly in the internal filesystem
+    pub fn create_dir_all(&self, path: &str) {
+        let mut fs = self.fs.write().unwrap();
+        fs.create_dir_all(path);
+    }
+    
     /// Unmount the filesystem and return the MemoryFileSystem
     pub fn unmount(mut self) -> MemoryFileSystem {
         self.host.stop();

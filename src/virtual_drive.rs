@@ -750,11 +750,17 @@ pub fn vdrive_list_files(drive_id: &str, path: &str) -> Result<Vec<String>, Virt
 
     let state = drives.get(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
+    // On Windows, check if we have a WinFsp mount - if so, use its direct access methods
+    #[cfg(target_os = "windows")]
+    if let Some(ref winfsp_mount) = state.winfsp_mount {
+        return Ok(winfsp_mount.list_directory(path));
+    }
+
     if let Some(ref memory_fs) = state.memory_fs {
-        // Memory-only mode (Windows without WinFsp)
+        // Memory-only mode
         Ok(memory_fs.list_dir(path))
     } else {
-        // Native filesystem mode (Linux/macOS tmpfs, or Windows WinFsp)
+        // Native filesystem mode (Linux/macOS tmpfs)
         let full_path = state.mount_path.join(path);
         let mut entries = Vec::new();
         
@@ -782,8 +788,19 @@ pub fn vdrive_read_file(drive_id: &str, path: &str) -> Result<Vec<u8>, VirtualDr
 
     let state = drives.get(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
+    // On Windows, check if we have a WinFsp mount - if so, use its direct access methods
+    #[cfg(target_os = "windows")]
+    if let Some(ref winfsp_mount) = state.winfsp_mount {
+        // Read directly from WinFsp's internal filesystem
+        return winfsp_mount.read_file(path)
+            .ok_or_else(|| VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "file not found",
+            )));
+    }
+
     if let Some(ref memory_fs) = state.memory_fs {
-        // Windows memory mode
+        // Memory-only mode
         memory_fs
             .read_file(path)
             .cloned()
@@ -792,7 +809,7 @@ pub fn vdrive_read_file(drive_id: &str, path: &str) -> Result<Vec<u8>, VirtualDr
                 "file not found",
             )))
     } else {
-        // Disk mode
+        // Disk mode (Linux tmpfs)
         let full_path = state.mount_path.join(path);
         std::fs::read(&full_path).map_err(VirtualDriveError::from)
     }
@@ -806,16 +823,29 @@ pub fn vdrive_write_file(drive_id: &str, path: &str, content: Vec<u8>) -> Result
 
     let state = drives.get_mut(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
+    // On Windows, check if we have a WinFsp mount - if so, use its direct access methods
+    #[cfg(target_os = "windows")]
+    if let Some(ref winfsp_mount) = state.winfsp_mount {
+        // Write directly to WinFsp's internal filesystem (bypasses OS filesystem API)
+        winfsp_mount.write_file(path, content);
+        return Ok(());
+    }
+
     if let Some(ref mut memory_fs) = state.memory_fs {
-        // Windows memory mode
+        // Memory-only mode - write directly to memory
         memory_fs.write_file(path, content);
         Ok(())
     } else {
-        // Disk mode
+        // Disk mode (Linux tmpfs) - write via OS filesystem
         let full_path = state.mount_path.join(path);
+        
+        // Create parent directories if needed
         if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent)?;
+            if parent != state.mount_path && !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
         }
+        
         std::fs::write(&full_path, content).map_err(VirtualDriveError::from)
     }
 }
@@ -828,8 +858,21 @@ pub fn vdrive_delete_file(drive_id: &str, path: &str) -> Result<(), VirtualDrive
 
     let state = drives.get_mut(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
+    // On Windows, check if we have a WinFsp mount - if so, use its direct access methods
+    #[cfg(target_os = "windows")]
+    if let Some(ref winfsp_mount) = state.winfsp_mount {
+        if winfsp_mount.delete_file(path) {
+            return Ok(());
+        } else {
+            return Err(VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "file not found",
+            )));
+        }
+    }
+
     if let Some(ref mut memory_fs) = state.memory_fs {
-        // Windows memory mode
+        // Memory-only mode
         if memory_fs.delete_file(path) {
             Ok(())
         } else {
@@ -839,7 +882,7 @@ pub fn vdrive_delete_file(drive_id: &str, path: &str) -> Result<(), VirtualDrive
             )))
         }
     } else {
-        // Disk mode
+        // Disk mode (Linux tmpfs)
         let full_path = state.mount_path.join(path);
         std::fs::remove_file(&full_path).map_err(VirtualDriveError::from)
     }
@@ -853,12 +896,19 @@ pub fn vdrive_create_dir(drive_id: &str, path: &str) -> Result<(), VirtualDriveE
 
     let state = drives.get_mut(drive_id).ok_or(VirtualDriveError::NotMounted)?;
 
+    // On Windows, check if we have a WinFsp mount - if so, use its direct access methods
+    #[cfg(target_os = "windows")]
+    if let Some(ref winfsp_mount) = state.winfsp_mount {
+        winfsp_mount.create_dir_all(path);
+        return Ok(());
+    }
+
     if let Some(ref mut memory_fs) = state.memory_fs {
-        // Windows memory mode
+        // Memory-only mode
         memory_fs.create_dir_all(path);
         Ok(())
     } else {
-        // Disk mode
+        // Disk mode (Linux tmpfs)
         let full_path = state.mount_path.join(path);
         std::fs::create_dir_all(&full_path).map_err(VirtualDriveError::from)
     }
@@ -878,6 +928,8 @@ pub fn is_memory_mode(drive_id: &str) -> bool {
 // =============================================================================
 
 /// Capture the content of a mounted drive as a tar archive
+/// Note: Used on non-Windows platforms; on Windows, WinFsp provides its own filesystem extraction
+#[allow(dead_code)]
 fn capture_mount_content(mount_path: &Path) -> Result<Vec<u8>, VirtualDriveError> {
     let mut archive_data = Vec::new();
 
@@ -978,6 +1030,8 @@ fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), Virtua
 }
 
 /// Securely remove directory contents by overwriting files before deletion
+/// Note: Used on non-Windows platforms for tmpfs cleanup
+#[allow(dead_code)]
 fn secure_remove_dir_contents(path: &Path) -> Result<(), VirtualDriveError> {
     if !path.exists() {
         return Ok(());
@@ -1527,26 +1581,32 @@ mod tests {
         
         // First mount: write some data
         {
-            assert!(unlock_drive(&drive).is_ok());
+            let mount_result = unlock_drive(&drive);
+            assert!(mount_result.is_ok(), "Failed to unlock: {:?}", mount_result.err());
             let drive_id = &drive.metadata.id;
             
-            assert!(vdrive_write_file(drive_id, "persistent.txt", b"Remember me!".to_vec()).is_ok());
-            assert!(lock_drive(&mut drive).is_ok());
+            let write_result = vdrive_write_file(drive_id, "persistent.txt", b"Remember me!".to_vec());
+            assert!(write_result.is_ok(), "Failed to write: {:?}", write_result.err());
+            
+            let lock_result = lock_drive(&mut drive);
+            assert!(lock_result.is_ok(), "Failed to lock: {:?}", lock_result.err());
         }
         
         // Content should be captured in drive.content
-        assert!(!drive.content.is_empty());
+        assert!(!drive.content.is_empty(), "Drive content should not be empty after lock");
         
         // Second mount: verify data persists
         {
-            assert!(unlock_drive(&drive).is_ok());
+            let mount_result = unlock_drive(&drive);
+            assert!(mount_result.is_ok(), "Failed to unlock (2nd time): {:?}", mount_result.err());
             let drive_id = &drive.metadata.id;
             
             let content = vdrive_read_file(drive_id, "persistent.txt");
-            assert!(content.is_ok());
+            assert!(content.is_ok(), "Failed to read: {:?}", content.err());
             assert_eq!(content.unwrap(), b"Remember me!");
             
-            assert!(lock_drive(&mut drive).is_ok());
+            let lock_result = lock_drive(&mut drive);
+            assert!(lock_result.is_ok(), "Failed to lock (2nd time): {:?}", lock_result.err());
         }
     }
 }
