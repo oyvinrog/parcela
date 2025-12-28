@@ -62,6 +62,32 @@ fn pick_input_file() -> Option<String> {
 }
 
 #[tauri::command]
+fn pick_destination_folder(title: String) -> Option<String> {
+    FileDialog::new()
+        .set_title(&title)
+        .pick_folder()
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+fn move_file(source: String, dest_folder: String) -> Result<String, String> {
+    let source_path = std::path::Path::new(&source);
+    if !source_path.exists() {
+        return Err(format!("Source file not found: {}", source));
+    }
+    
+    let filename = source_path.file_name()
+        .ok_or("Invalid source path")?;
+    
+    let dest_path = std::path::Path::new(&dest_folder).join(filename);
+    
+    std::fs::rename(&source_path, &dest_path)
+        .map_err(|e| format!("Failed to move file: {}", e))?;
+    
+    Ok(dest_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 fn pick_output_dir() -> Option<String> {
     FileDialog::new()
         .pick_folder()
@@ -548,6 +574,8 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             pick_input_file,
+            pick_destination_folder,
+            move_file,
             pick_output_dir,
             pick_share_files,
             pick_vault_file,

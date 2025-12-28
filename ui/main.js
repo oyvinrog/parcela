@@ -484,7 +484,7 @@ function renderDetail() {
 
     const changeBtn = document.createElement("button");
     changeBtn.type = "button";
-    changeBtn.textContent = "Change";
+    changeBtn.textContent = "Relocate";
     changeBtn.addEventListener("click", () => handleChangeShare(i, isDrive));
     actions.appendChild(changeBtn);
 
@@ -768,15 +768,29 @@ async function handleChangeShare(index, isDrive = false) {
   }
   if (!entry) return;
 
-  const sharePath = await invoke("pick_input_file");
-  if (!sharePath) return;
+  const currentPath = entry.shares[index];
+  if (!currentPath) {
+    setStatus("No share path to relocate", "error");
+    return;
+  }
 
-  entry.shares[index] = sharePath;
-  await refreshAvailability(entry);
-  await saveVault();
-  renderFileList();
-  renderDetail();
-  setStatus("Share location updated.", "success");
+  const shareFilename = getFileName(currentPath);
+  const title = `Move "${shareFilename}" to folder`;
+
+  const destFolder = await invoke("pick_destination_folder", { title });
+  if (!destFolder) return;
+
+  try {
+    const newPath = await invoke("move_file", { source: currentPath, destFolder });
+    entry.shares[index] = newPath;
+    await refreshAvailability(entry);
+    await saveVault();
+    renderFileList();
+    renderDetail();
+    setStatus("Share moved successfully.", "success");
+  } catch (err) {
+    setStatus(`Failed to move: ${err}`, "error");
+  }
 }
 
 async function handleCreateVirtualDrive() {
