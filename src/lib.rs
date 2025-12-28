@@ -1,5 +1,6 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
+use argon2::{Argon2, Algorithm, Version, Params};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
@@ -13,8 +14,22 @@ pub use virtual_drive::{
     MAGIC_VDRIVE, DEFAULT_DRIVE_SIZE_MB,
 };
 
-pub const MAGIC_BLOB: &[u8; 8] = b"PARCELA1";
+/// Legacy format magic (SHA-256 key derivation) - for reading old files only
+pub const MAGIC_BLOB_V1: &[u8; 8] = b"PARCELA1";
+/// Current format magic (Argon2id key derivation)
+pub const MAGIC_BLOB: &[u8; 8] = b"PARCELA2";
 pub const MAGIC_SHARE: &[u8; 8] = b"PSHARE01";
+
+/// Salt size for Argon2id
+pub const SALT_SIZE: usize = 32;
+
+/// Argon2id parameters for high security (targets ~2s on modern hardware)
+/// - Memory: 64 MiB (good resistance against GPU/ASIC attacks)
+/// - Time: 3 iterations
+/// - Parallelism: 4 lanes
+const ARGON2_M_COST: u32 = 64 * 1024; // 64 MiB in KiB
+const ARGON2_T_COST: u32 = 3;         // 3 iterations
+const ARGON2_P_COST: u32 = 4;         // 4 parallel lanes
 pub const SHARE_TOTAL: u8 = 3;
 pub const SHARE_THRESHOLD: u8 = 2;
 
@@ -43,7 +58,8 @@ pub struct Share {
     pub payload: Vec<u8>,
 }
 
-pub fn derive_key(password: &str) -> [u8; 32] {
+/// Legacy key derivation using SHA-256 (for reading PARCELA1 files only)
+fn derive_key_legacy(password: &str) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(password.as_bytes());
     let result = hasher.finalize();
@@ -52,12 +68,30 @@ pub fn derive_key(password: &str) -> [u8; 32] {
     key
 }
 
+/// Derive encryption key using Argon2id with high-security parameters.
+/// This function is intentionally slow (10-20 seconds) to protect against brute-force attacks.
+pub fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32], ParcelaError> {
+    let params = Params::new(ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, Some(32))
+        .map_err(|_| ParcelaError::CryptoFailure)?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    
+    let mut key = [0u8; 32];
+    argon2
+        .hash_password_into(password.as_bytes(), salt, &mut key)
+        .map_err(|_| ParcelaError::CryptoFailure)?;
+    Ok(key)
+}
+
 pub fn encrypt_with_rng(
     plaintext: &[u8],
     password: &str,
     rng: &mut impl RngCore,
 ) -> Result<Vec<u8>, ParcelaError> {
-    let key = derive_key(password);
+    // Generate random salt for Argon2id
+    let mut salt = [0u8; SALT_SIZE];
+    rng.fill_bytes(&mut salt);
+    
+    let key = derive_key(password, &salt)?;
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| ParcelaError::CryptoFailure)?;
     let mut nonce_bytes = [0u8; 12];
     rng.fill_bytes(&mut nonce_bytes);
@@ -66,8 +100,10 @@ pub fn encrypt_with_rng(
         .encrypt(nonce, plaintext)
         .map_err(|_| ParcelaError::CryptoFailure)?;
 
-    let mut out = Vec::with_capacity(MAGIC_BLOB.len() + nonce_bytes.len() + ciphertext.len());
+    // Format: MAGIC (8) + SALT (32) + NONCE (12) + CIPHERTEXT
+    let mut out = Vec::with_capacity(MAGIC_BLOB.len() + SALT_SIZE + nonce_bytes.len() + ciphertext.len());
     out.extend_from_slice(MAGIC_BLOB);
+    out.extend_from_slice(&salt);
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
     Ok(out)
@@ -79,22 +115,52 @@ pub fn encrypt(plaintext: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError
 }
 
 pub fn decrypt(blob: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError> {
-    if blob.len() < MAGIC_BLOB.len() + 12 {
+    if blob.len() < 8 {
         return Err(ParcelaError::InvalidFormat("blob too small"));
     }
-    if &blob[..MAGIC_BLOB.len()] != MAGIC_BLOB {
-        return Err(ParcelaError::InvalidFormat("bad magic"));
+    
+    let magic = &blob[..8];
+    
+    // Handle legacy PARCELA1 format (SHA-256 key derivation)
+    if magic == MAGIC_BLOB_V1 {
+        if blob.len() < 8 + 12 {
+            return Err(ParcelaError::InvalidFormat("blob too small"));
+        }
+        let nonce_start = 8;
+        let nonce_end = nonce_start + 12;
+        let nonce = Nonce::from_slice(&blob[nonce_start..nonce_end]);
+        let ciphertext = &blob[nonce_end..];
+        
+        let key = derive_key_legacy(password);
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| ParcelaError::CryptoFailure)?;
+        return cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|_| ParcelaError::CryptoFailure);
     }
-    let nonce_start = MAGIC_BLOB.len();
-    let nonce_end = nonce_start + 12;
-    let nonce = Nonce::from_slice(&blob[nonce_start..nonce_end]);
-    let ciphertext = &blob[nonce_end..];
-
-    let key = derive_key(password);
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| ParcelaError::CryptoFailure)?;
-    cipher
-        .decrypt(nonce, ciphertext)
-        .map_err(|_| ParcelaError::CryptoFailure)
+    
+    // Handle current PARCELA2 format (Argon2id key derivation)
+    if magic == MAGIC_BLOB {
+        // Format: MAGIC (8) + SALT (32) + NONCE (12) + CIPHERTEXT
+        if blob.len() < 8 + SALT_SIZE + 12 {
+            return Err(ParcelaError::InvalidFormat("blob too small"));
+        }
+        let salt_start = 8;
+        let salt_end = salt_start + SALT_SIZE;
+        let salt = &blob[salt_start..salt_end];
+        
+        let nonce_start = salt_end;
+        let nonce_end = nonce_start + 12;
+        let nonce = Nonce::from_slice(&blob[nonce_start..nonce_end]);
+        let ciphertext = &blob[nonce_end..];
+        
+        let key = derive_key(password, salt)?;
+        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| ParcelaError::CryptoFailure)?;
+        return cipher
+            .decrypt(nonce, ciphertext)
+            .map_err(|_| ParcelaError::CryptoFailure);
+    }
+    
+    Err(ParcelaError::InvalidFormat("bad magic"))
 }
 
 pub fn split_shares_with_rng(
@@ -309,8 +375,18 @@ mod tests {
 
     #[test]
     fn decrypt_rejects_too_small() {
-        let blob = vec![0u8; 8 + 11];
-        let err = decrypt(&blob, "pass").unwrap_err();
+        // Test v1 format (PARCELA1) with insufficient size
+        let mut blob_v1 = Vec::new();
+        blob_v1.extend_from_slice(MAGIC_BLOB_V1);
+        blob_v1.extend_from_slice(&[0u8; 11]); // Need 12 bytes for nonce
+        let err = decrypt(&blob_v1, "pass").unwrap_err();
+        assert!(matches!(err, ParcelaError::InvalidFormat("blob too small")));
+        
+        // Test v2 format (PARCELA2) with insufficient size
+        let mut blob_v2 = Vec::new();
+        blob_v2.extend_from_slice(MAGIC_BLOB);
+        blob_v2.extend_from_slice(&[0u8; 43]); // Need 32 (salt) + 12 (nonce) = 44 bytes
+        let err = decrypt(&blob_v2, "pass").unwrap_err();
         assert!(matches!(err, ParcelaError::InvalidFormat("blob too small")));
     }
 

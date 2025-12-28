@@ -11,6 +11,12 @@ const state = {
   selectedType: "file", // "file" or "drive"
   unlockedDrives: new Map(), // drive_id -> { mount_path }
   isMemoryMode: false, // true on Windows where virtual drives are memory-only
+  // File browser state
+  fileBrowser: {
+    currentPath: "",
+    selectedEntry: null, // { name, isDir }
+    entries: [],
+  },
 };
 
 const shareIndexRegex = /^(.*)\.share([1-3])$/;
@@ -20,8 +26,6 @@ const loginScreen = document.getElementById("login-screen");
 const vaultScreen = document.getElementById("vault-screen");
 
 const vaultPasswordEl = document.getElementById("vault-password");
-const vaultPathEl = document.getElementById("vault-path");
-const vaultSavePathEl = document.getElementById("vault-save-path");
 const vaultCurrentPathEl = document.getElementById("vault-current-path");
 const vaultNameEl = document.getElementById("vault-name");
 const selectAllEl = document.getElementById("select-all-files");
@@ -44,8 +48,45 @@ const unlockDriveBtn = document.getElementById("unlock-drive");
 const lockDriveBtn = document.getElementById("lock-drive");
 const openDriveBtn = document.getElementById("open-drive");
 
-let pendingOpenPath = "";
-let pendingSavePath = "";
+// File browser elements
+const fileBrowserEl = document.getElementById("file-browser");
+const fbBreadcrumbEl = document.getElementById("fb-breadcrumb");
+const fbListEl = document.getElementById("fb-list");
+const fbSelectionEl = document.getElementById("fb-selection");
+const fbSelectedNameEl = document.getElementById("fb-selected-name");
+const fbUploadBtn = document.getElementById("fb-upload");
+const fbNewFolderBtn = document.getElementById("fb-new-folder");
+const fbDownloadBtn = document.getElementById("fb-download");
+const fbDeleteBtn = document.getElementById("fb-delete");
+
+
+// Loading overlay elements
+const loadingOverlay = document.getElementById("loading-overlay");
+const loadingTitle = document.getElementById("loading-title");
+
+function showLoading(message = "Deriving encryption key…") {
+  console.log("[Parcela] showLoading:", message);
+  loadingTitle.textContent = message;
+  loadingOverlay.classList.remove("hidden");
+  // Force display in case CSS class isn't working
+  loadingOverlay.style.display = "flex";
+}
+
+function hideLoading() {
+  console.log("[Parcela] hideLoading");
+  loadingOverlay.classList.add("hidden");
+  loadingOverlay.style.display = "none";
+}
+
+// Helper to ensure loading overlay is rendered before heavy computation
+function waitForPaint() {
+  return new Promise((resolve) => {
+    // Use setTimeout as fallback for environments where rAF might not work as expected
+    requestAnimationFrame(() => {
+      setTimeout(resolve, 50);
+    });
+  });
+}
 
 function setStatus(message, kind = "") {
   statusEl.textContent = message;
@@ -302,6 +343,11 @@ function renderFileList() {
     item.appendChild(meta);
 
     item.addEventListener("click", () => {
+      // Reset file browser when switching drives
+      if (state.selectedFileId !== drive.id) {
+        state.fileBrowser.currentPath = "";
+        state.fileBrowser.selectedEntry = null;
+      }
       state.selectedFileId = drive.id;
       state.selectedType = "drive";
       renderDetail();
@@ -432,11 +478,21 @@ function renderDetail() {
     const actions = document.createElement("div");
     actions.className = "share-actions";
 
+    // Relocate button: only enabled when share exists and is available (can be moved)
     const changeBtn = document.createElement("button");
     changeBtn.type = "button";
-    changeBtn.textContent = "Change";
-    changeBtn.addEventListener("click", () => handleChangeShare(i, isDrive));
+    changeBtn.textContent = "Relocate";
+    changeBtn.disabled = !entry.shares[i] || !entry.available[i];
+    changeBtn.addEventListener("click", () => handleRelocateShare(i, isDrive));
     actions.appendChild(changeBtn);
+
+    // Locate button: enabled when share path exists but file is missing (update path to new location)
+    const locateBtn = document.createElement("button");
+    locateBtn.type = "button";
+    locateBtn.textContent = "Locate";
+    locateBtn.disabled = !entry.shares[i] || entry.available[i];
+    locateBtn.addEventListener("click", () => handleLocateShare(i, isDrive));
+    actions.appendChild(locateBtn);
 
     const browseBtn = document.createElement("button");
     browseBtn.type = "button";
@@ -477,13 +533,17 @@ function renderDetail() {
     if (isUnlocked) {
       driveStatusEl.classList.remove("hidden");
       driveMountPathEl.textContent = getDriveMountPath(entry.id) || "Unknown";
+      // Show file browser for unlocked drives
+      loadFileBrowser(entry.id, state.fileBrowser.currentPath || "");
     } else {
       driveStatusEl.classList.add("hidden");
+      hideFileBrowser();
     }
   } else {
     fileActionsEl.classList.remove("hidden");
     driveActionsEl.classList.add("hidden");
     driveStatusEl.classList.add("hidden");
+    hideFileBrowser();
     recoverBtn.disabled = availableCount < 2;
   }
 }
@@ -517,18 +577,25 @@ function addOrUpdateFileEntry({ name, shares }) {
 
 async function handleOpenVault() {
   const password = vaultPasswordEl.value.trim();
-  if (!pendingOpenPath || !password) {
-    setStatus("Select a vault and enter the password.", "error");
+  if (!password) {
+    setStatus("Enter the vault password.", "error");
     return;
   }
 
+  // Pick vault file
+  const vaultPath = await invoke("pick_vault_file");
+  if (!vaultPath) return;
+
   try {
     setStatus("Opening vault...");
+    showLoading("Unlocking vault…");
+    await waitForPaint();
     const vault = await invoke("open_vault", {
-      path: pendingOpenPath,
+      path: vaultPath,
       password,
     });
-    state.vaultPath = pendingOpenPath;
+    hideLoading();
+    state.vaultPath = vaultPath;
     state.vaultPassword = password;
     state.vault = vault;
     // Ensure virtual_drives array exists
@@ -557,24 +624,32 @@ async function handleOpenVault() {
     showVaultScreen();
     setStatus("Vault open.", "success");
   } catch (err) {
+    hideLoading();
     setStatus(`Error: ${err}`, "error");
   }
 }
 
 async function handleCreateVault() {
   const password = vaultPasswordEl.value.trim();
-  if (!pendingSavePath || !password) {
-    setStatus("Choose a vault destination and enter a password.", "error");
+  if (!password) {
+    setStatus("Enter a password for your new vault.", "error");
     return;
   }
 
+  // Pick save location
+  const savePath = await invoke("pick_vault_save");
+  if (!savePath) return;
+
   try {
     setStatus("Creating vault...");
+    showLoading("Creating vault…");
+    await waitForPaint();
     const vault = await invoke("create_vault", {
-      path: pendingSavePath,
+      path: savePath,
       password,
     });
-    state.vaultPath = pendingSavePath;
+    hideLoading();
+    state.vaultPath = savePath;
     state.vaultPassword = password;
     state.vault = vault;
     state.selectedFileId = null;
@@ -584,6 +659,7 @@ async function handleCreateVault() {
     showVaultScreen();
     setStatus("Vault created.", "success");
   } catch (err) {
+    hideLoading();
     setStatus(`Error: ${err}`, "error");
   }
 }
@@ -597,11 +673,14 @@ async function handleAddFile() {
     if (!outDir) return;
 
     setStatus("Encrypting and splitting...");
+    showLoading("Encrypting file…");
+    await waitForPaint();
     const sharePaths = await invoke("split_file", {
       inputPath,
       outDir,
       password: state.vaultPassword,
     });
+    hideLoading();
 
     const name = getFileName(inputPath);
     const shares = [null, null, null];
@@ -619,6 +698,7 @@ async function handleAddFile() {
     renderDetail();
     setStatus("File added to vault.", "success");
   } catch (err) {
+    hideLoading();
     setStatus(`Error: ${err}`, "error");
   }
 }
@@ -675,20 +755,24 @@ async function handleRecoverFile() {
     if (!outputPath) return;
 
     setStatus("Recovering file...");
+    showLoading("Decrypting file…");
+    await waitForPaint();
     const recovered = await invoke("combine_shares", {
       sharePaths: availablePaths.slice(0, 2),
       outputPath,
       password: state.vaultPassword,
     });
+    hideLoading();
     showRecoveredResult([recovered], []);
     setStatus("File recovered.", "success");
   } catch (err) {
+    hideLoading();
     setResultText(`Error: ${err}`);
     setStatus("Recovery failed.", "error");
   }
 }
 
-async function handleChangeShare(index, isDrive = false) {
+async function handleRelocateShare(index, isDrive = false) {
   setResultText("");
   let entry;
   if (isDrive) {
@@ -698,15 +782,76 @@ async function handleChangeShare(index, isDrive = false) {
   }
   if (!entry) return;
 
-  const sharePath = await invoke("pick_input_file");
-  if (!sharePath) return;
+  const currentPath = entry.shares[index];
+  if (!currentPath) {
+    setStatus("No share path to relocate", "error");
+    return;
+  }
 
-  entry.shares[index] = sharePath;
-  await refreshAvailability(entry);
-  await saveVault();
-  renderFileList();
-  renderDetail();
-  setStatus("Share location updated.", "success");
+  if (!entry.available[index]) {
+    setStatus("Cannot relocate missing share. Use 'Locate' to find it.", "error");
+    return;
+  }
+
+  const shareFilename = getFileName(currentPath);
+  const title = `Move "${shareFilename}" to folder`;
+
+  const destFolder = await invoke("pick_destination_folder", { title });
+  if (!destFolder) return;
+
+  try {
+    const newPath = await invoke("move_file", { source: currentPath, destFolder });
+    entry.shares[index] = newPath;
+    await refreshAvailability(entry);
+    await saveVault();
+    renderFileList();
+    renderDetail();
+    setStatus("Share moved successfully.", "success");
+  } catch (err) {
+    setStatus(`Failed to move: ${err}`, "error");
+  }
+}
+
+async function handleLocateShare(index, isDrive = false) {
+  setResultText("");
+  let entry;
+  if (isDrive) {
+    entry = (state.vault.virtual_drives || []).find((d) => d.id === state.selectedFileId);
+  } else {
+    entry = state.vault.files.find((f) => f.id === state.selectedFileId);
+  }
+  if (!entry) return;
+
+  const currentPath = entry.shares[index];
+  if (!currentPath) {
+    setStatus("No share path to locate", "error");
+    return;
+  }
+
+  const shareFilename = getFileName(currentPath);
+
+  try {
+    const newPath = await invoke("pick_input_file");
+    if (!newPath) return;
+
+    // Verify the selected file has the expected share filename
+    const selectedFilename = getFileName(newPath);
+    if (selectedFilename !== shareFilename) {
+      const proceed = confirm(
+        `Selected file "${selectedFilename}" has a different name than expected "${shareFilename}".\n\nContinue anyway?`
+      );
+      if (!proceed) return;
+    }
+
+    entry.shares[index] = newPath;
+    await refreshAvailability(entry);
+    await saveVault();
+    renderFileList();
+    renderDetail();
+    setStatus("Share location updated.", "success");
+  } catch (err) {
+    setStatus(`Failed to update location: ${err}`, "error");
+  }
 }
 
 async function handleCreateVirtualDrive() {
@@ -723,12 +868,15 @@ async function handleCreateVirtualDrive() {
     if (!outDir) return;
 
     setStatus("Creating virtual drive...");
+    showLoading("Creating virtual drive…");
+    await waitForPaint();
     const driveInfo = await invoke("create_virtual_drive", {
       name: name.trim(),
       sizeMb,
       outDir,
       password: state.vaultPassword,
     });
+    hideLoading();
 
     // Add to vault
     if (!state.vault.virtual_drives) {
@@ -745,6 +893,7 @@ async function handleCreateVirtualDrive() {
     renderDetail();
     setStatus("Virtual drive created.", "success");
   } catch (err) {
+    hideLoading();
     setStatus(`Error: ${err}`, "error");
   }
 }
@@ -765,10 +914,13 @@ async function handleUnlockDrive() {
 
   try {
     setStatus("Unlocking drive...");
+    showLoading("Unlocking drive…");
+    await waitForPaint();
     const unlockInfo = await invoke("unlock_virtual_drive", {
       sharePaths: availablePaths.slice(0, 2),
       password: state.vaultPassword,
     });
+    hideLoading();
 
     state.unlockedDrives.set(unlockInfo.drive_id, {
       mount_path: unlockInfo.mount_path,
@@ -780,6 +932,7 @@ async function handleUnlockDrive() {
     setResultText(`Drive unlocked at: ${unlockInfo.mount_path}`);
     setStatus("Drive unlocked.", "success");
   } catch (err) {
+    hideLoading();
     setResultText(`Error: ${err}`);
     setStatus("Unlock failed.", "error");
   }
@@ -794,11 +947,14 @@ async function handleLockDrive() {
 
   try {
     setStatus("Locking drive...");
+    showLoading("Locking drive…");
+    await waitForPaint();
     await invoke("lock_virtual_drive", {
       driveId: drive.id,
       sharePaths: drive.shares,
       password: state.vaultPassword,
     });
+    hideLoading();
 
     state.unlockedDrives.delete(drive.id);
     renderFileList();
@@ -806,6 +962,7 @@ async function handleLockDrive() {
     setResultText("Drive locked and content saved.");
     setStatus("Drive locked.", "success");
   } catch (err) {
+    hideLoading();
     setResultText(`Error: ${err}`);
     setStatus("Lock failed.", "error");
   }
@@ -830,6 +987,278 @@ async function handleOpenDrive() {
   }
 }
 
+// =============================================================================
+// File Browser Functions (for virtual drives)
+// =============================================================================
+
+function getSelectedDriveId() {
+  if (state.selectedType !== "drive") return null;
+  return state.selectedFileId;
+}
+
+function showFileBrowser() {
+  fileBrowserEl.classList.remove("hidden");
+}
+
+function hideFileBrowser() {
+  fileBrowserEl.classList.add("hidden");
+  state.fileBrowser.currentPath = "";
+  state.fileBrowser.selectedEntry = null;
+  state.fileBrowser.entries = [];
+}
+
+async function loadFileBrowser(driveId, path = "") {
+  state.fileBrowser.currentPath = path;
+  state.fileBrowser.selectedEntry = null;
+  
+  try {
+    const entries = await invoke("vdrive_list_files", { driveId, path });
+    state.fileBrowser.entries = entries;
+    renderFileBrowser();
+  } catch (err) {
+    console.error("Failed to load file browser:", err);
+    state.fileBrowser.entries = [];
+    renderFileBrowser();
+  }
+}
+
+function renderFileBrowser() {
+  const driveId = getSelectedDriveId();
+  if (!driveId || !isDriveUnlocked(driveId)) {
+    hideFileBrowser();
+    return;
+  }
+
+  showFileBrowser();
+  renderBreadcrumb();
+  renderFileList_FB();
+  renderSelection();
+}
+
+function renderBreadcrumb() {
+  fbBreadcrumbEl.innerHTML = "";
+  
+  const parts = state.fileBrowser.currentPath
+    ? state.fileBrowser.currentPath.split("/").filter(Boolean)
+    : [];
+  
+  // Root button
+  const rootBtn = document.createElement("button");
+  rootBtn.className = "breadcrumb-item" + (parts.length === 0 ? " active" : "");
+  rootBtn.textContent = "🏠 Root";
+  rootBtn.dataset.path = "";
+  rootBtn.addEventListener("click", () => navigateTo(""));
+  fbBreadcrumbEl.appendChild(rootBtn);
+  
+  // Path segments
+  let accumulated = "";
+  for (let i = 0; i < parts.length; i++) {
+    const sep = document.createElement("span");
+    sep.className = "breadcrumb-sep";
+    sep.textContent = "›";
+    fbBreadcrumbEl.appendChild(sep);
+    
+    accumulated += (accumulated ? "/" : "") + parts[i];
+    const btn = document.createElement("button");
+    btn.className = "breadcrumb-item" + (i === parts.length - 1 ? " active" : "");
+    btn.textContent = parts[i];
+    btn.dataset.path = accumulated;
+    const pathCopy = accumulated;
+    btn.addEventListener("click", () => navigateTo(pathCopy));
+    fbBreadcrumbEl.appendChild(btn);
+  }
+}
+
+function renderFileList_FB() {
+  fbListEl.innerHTML = "";
+  
+  const entries = state.fileBrowser.entries || [];
+  
+  if (entries.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "fb-empty";
+    empty.textContent = "This folder is empty. Import files to get started.";
+    fbListEl.appendChild(empty);
+    return;
+  }
+  
+  // Sort: folders first, then files, alphabetically
+  const sorted = [...entries].sort((a, b) => {
+    if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  
+  for (const entry of sorted) {
+    const el = document.createElement("div");
+    el.className = "fb-entry" + (entry.is_dir ? " folder" : "");
+    
+    if (
+      state.fileBrowser.selectedEntry &&
+      state.fileBrowser.selectedEntry.name === entry.name
+    ) {
+      el.classList.add("selected");
+    }
+    
+    const icon = document.createElement("span");
+    icon.className = "fb-entry-icon";
+    icon.textContent = entry.is_dir ? "📁" : getFileIcon(entry.name);
+    
+    const name = document.createElement("span");
+    name.className = "fb-entry-name";
+    name.textContent = entry.name;
+    
+    el.appendChild(icon);
+    el.appendChild(name);
+    
+    el.addEventListener("click", () => handleEntryClick(entry));
+    el.addEventListener("dblclick", () => handleEntryDoubleClick(entry));
+    
+    fbListEl.appendChild(el);
+  }
+}
+
+function getFileIcon(filename) {
+  const ext = filename.split(".").pop()?.toLowerCase() || "";
+  const iconMap = {
+    txt: "📄",
+    md: "📝",
+    pdf: "📕",
+    doc: "📘",
+    docx: "📘",
+    xls: "📗",
+    xlsx: "📗",
+    png: "🖼️",
+    jpg: "🖼️",
+    jpeg: "🖼️",
+    gif: "🖼️",
+    svg: "🖼️",
+    mp3: "🎵",
+    wav: "🎵",
+    mp4: "🎬",
+    mov: "🎬",
+    zip: "📦",
+    rar: "📦",
+    "7z": "📦",
+    json: "📋",
+    xml: "📋",
+    html: "🌐",
+    css: "🎨",
+    js: "⚡",
+    ts: "⚡",
+    py: "🐍",
+    rs: "🦀",
+    key: "🔑",
+    pem: "🔐",
+  };
+  return iconMap[ext] || "📄";
+}
+
+function renderSelection() {
+  const sel = state.fileBrowser.selectedEntry;
+  if (!sel || sel.is_dir) {
+    fbSelectionEl.classList.add("hidden");
+    return;
+  }
+  
+  fbSelectionEl.classList.remove("hidden");
+  fbSelectedNameEl.textContent = sel.name;
+}
+
+function handleEntryClick(entry) {
+  state.fileBrowser.selectedEntry = entry;
+  renderFileList_FB();
+  renderSelection();
+}
+
+function handleEntryDoubleClick(entry) {
+  if (entry.is_dir) {
+    navigateTo(joinPath(state.fileBrowser.currentPath, entry.name));
+  }
+}
+
+function navigateTo(path) {
+  const driveId = getSelectedDriveId();
+  if (!driveId) return;
+  loadFileBrowser(driveId, path);
+}
+
+async function handleFBUpload() {
+  const driveId = getSelectedDriveId();
+  if (!driveId) return;
+  
+  try {
+    setStatus("Importing file...");
+    const importedPath = await invoke("vdrive_import_file", {
+      driveId,
+      destPath: state.fileBrowser.currentPath,
+    });
+    await loadFileBrowser(driveId, state.fileBrowser.currentPath);
+    setStatus(`Imported: ${importedPath}`, "success");
+  } catch (err) {
+    if (err !== "No file selected") {
+      setStatus(`Error: ${err}`, "error");
+    }
+  }
+}
+
+async function handleFBNewFolder() {
+  const driveId = getSelectedDriveId();
+  if (!driveId) return;
+  
+  const name = prompt("Enter folder name:");
+  if (!name || name.trim() === "") return;
+  
+  const folderPath = joinPath(state.fileBrowser.currentPath, name.trim());
+  
+  try {
+    setStatus("Creating folder...");
+    await invoke("vdrive_create_dir", { driveId, path: folderPath });
+    await loadFileBrowser(driveId, state.fileBrowser.currentPath);
+    setStatus(`Created folder: ${name}`, "success");
+  } catch (err) {
+    setStatus(`Error: ${err}`, "error");
+  }
+}
+
+async function handleFBDownload() {
+  const driveId = getSelectedDriveId();
+  const sel = state.fileBrowser.selectedEntry;
+  if (!driveId || !sel || sel.is_dir) return;
+  
+  const filePath = joinPath(state.fileBrowser.currentPath, sel.name);
+  
+  try {
+    setStatus("Exporting file...");
+    const savedPath = await invoke("vdrive_export_file", { driveId, path: filePath });
+    setStatus(`Exported to: ${savedPath}`, "success");
+  } catch (err) {
+    if (err !== "No save location selected") {
+      setStatus(`Error: ${err}`, "error");
+    }
+  }
+}
+
+async function handleFBDelete() {
+  const driveId = getSelectedDriveId();
+  const sel = state.fileBrowser.selectedEntry;
+  if (!driveId || !sel) return;
+  
+  const filePath = joinPath(state.fileBrowser.currentPath, sel.name);
+  const typeLabel = sel.is_dir ? "folder" : "file";
+  
+  if (!confirm(`Delete ${typeLabel} "${sel.name}"?`)) return;
+  
+  try {
+    setStatus(`Deleting ${typeLabel}...`);
+    await invoke("vdrive_delete_file", { driveId, path: filePath });
+    state.fileBrowser.selectedEntry = null;
+    await loadFileBrowser(driveId, state.fileBrowser.currentPath);
+    setStatus(`Deleted: ${sel.name}`, "success");
+  } catch (err) {
+    setStatus(`Error: ${err}`, "error");
+  }
+}
+
 async function handleRecoverSelected() {
   setResultText("");
   const selectedFiles = state.vault.files.filter((entry) =>
@@ -841,6 +1270,8 @@ async function handleRecoverSelected() {
   if (!outputDir) return;
 
   setStatus("Recovering selected files...");
+  showLoading("Decrypting files…");
+  await waitForPaint();
   const recoveredPaths = [];
   const errors = [];
 
@@ -864,6 +1295,7 @@ async function handleRecoverSelected() {
       errors.push(`${file.name}: ${err}`);
     }
   }
+  hideLoading();
 
   showRecoveredResult(recoveredPaths, errors);
 
@@ -886,18 +1318,12 @@ async function handleRefreshStatus() {
   }
 }
 
-document.getElementById("pick-vault").addEventListener("click", async () => {
-  const path = await invoke("pick_vault_file");
-  if (!path) return;
-  pendingOpenPath = path;
-  vaultPathEl.textContent = path;
-});
-
-document.getElementById("pick-vault-save").addEventListener("click", async () => {
-  const path = await invoke("pick_vault_save");
-  if (!path) return;
-  pendingSavePath = path;
-  vaultSavePathEl.textContent = path;
+// Enter key in password field triggers Open Vault
+vaultPasswordEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    handleOpenVault();
+  }
 });
 
 document.getElementById("open-vault").addEventListener("click", handleOpenVault);
@@ -919,6 +1345,12 @@ recoverBtn.addEventListener("click", handleRecoverFile);
 unlockDriveBtn.addEventListener("click", handleUnlockDrive);
 lockDriveBtn.addEventListener("click", handleLockDrive);
 openDriveBtn.addEventListener("click", handleOpenDrive);
+
+// File browser event listeners
+fbUploadBtn.addEventListener("click", handleFBUpload);
+fbNewFolderBtn.addEventListener("click", handleFBNewFolder);
+fbDownloadBtn.addEventListener("click", handleFBDownload);
+fbDeleteBtn.addEventListener("click", handleFBDelete);
 
 // Check if we're on a platform that uses memory-only mode (Windows)
 // and hide the "Open in Browser" button if so

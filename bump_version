@@ -99,10 +99,20 @@ update_tauri_conf() {
     echo -e "  ${GREEN}✓${NC} $file"
 }
 
+sync_tags() {
+    # Sync tags with remote to prevent conflicts
+    if git remote get-url origin &>/dev/null; then
+        git fetch --tags --force origin 2>/dev/null || true
+    fi
+}
+
 main() {
     if [[ $# -ne 1 ]]; then
         usage
     fi
+    
+    # Sync tags before bumping to prevent conflicts
+    sync_tags
     
     local bump_type="$1"
     local current_version
@@ -143,7 +153,9 @@ main() {
     echo -e "${BLUE}Next steps:${NC}"
     echo "  git add -A"
     echo "  git commit -m \"chore: bump version to $new_version\""
+    echo "  git push origin HEAD"
     echo "  git tag -a v$new_version -m \"Release v$new_version\""
+    echo "  git push origin v$new_version"
 }
 
 main "$@"
