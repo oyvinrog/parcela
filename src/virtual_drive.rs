@@ -694,7 +694,7 @@ pub fn lock_drive(drive: &mut VirtualDrive) -> Result<(), VirtualDriveError> {
             drive.content = memory_fs.to_archive();
             memory_fs.clear();
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(target_os = "windows"))]

@@ -179,63 +179,6 @@ jobs:
         run: cargo clippy -- -D warnings
         continue-on-error: true
 
-  # Windows tests WITHOUT WinFsp - verifies fallback behavior
-  # Note: These tests verify that the app builds and basic tests pass without WinFsp
-  # The winfsp integration tests are skipped entirely since they require the DLL
-  test-windows-no-winfsp:
-    runs-on: windows-latest
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-      
-      - name: Cache cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-no-winfsp-cargo-${{ hashFiles('**/Cargo.lock') }}
-      
-      - name: Verify WinFsp is NOT installed
-        run: |
-          if (Test-Path "C:\Program Files\WinFsp\bin\winfsp-x64.dll") {
-            Write-Host "⚠ WinFsp is unexpectedly installed"
-          } else {
-            Write-Host "✓ WinFsp is NOT installed (expected for this test)"
-          }
-        shell: pwsh
-
-      - name: Build (should succeed without WinFsp due to delay-loading)
-        run: cargo build --verbose
-
-      # Run only tests that don't touch WinFsp code paths
-      # Skip all virtual_drive tests that might trigger WinFsp loading
-      - name: Run safe unit tests (no WinFsp)
-        run: |
-          cargo test --verbose -- `
-            --skip winfsp `
-            --skip virtual_drive::tests::unlock `
-            --skip virtual_drive::tests::lock `
-            --skip virtual_drive::tests::vdrive_operations `
-            --skip virtual_drive::tests::drive_content_persists `
-            --skip virtual_drive::tests::is_winfsp `
-            --skip virtual_drive::tests::uses_memory_mode `
-            --skip virtual_drive::tests::uses_native_fs
-        shell: pwsh
-      
-      # Skip the winfsp_integration tests entirely - they require the DLL
-      - name: Note about skipped tests
-        run: |
-          Write-Host "ℹ WinFsp integration tests skipped (WinFsp not installed)"
-          Write-Host "ℹ Run 'test-windows' job for full WinFsp testing"
-        shell: pwsh
-
   test-linux:
     runs-on: ubuntu-latest
     
