@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use rfd::FileDialog;
+use tauri::{Emitter, Manager};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -144,37 +145,6 @@ fn pick_output_file() -> Option<String> {
     FileDialog::new()
         .save_file()
         .map(|path| path.to_string_lossy().to_string())
-}
-
-#[tauri::command]
-async fn split_file(input_path: String, out_dir: String, password: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let input = std::path::PathBuf::from(&input_path);
-        let out_dir = std::path::PathBuf::from(&out_dir);
-
-        let plaintext = std::fs::read(&input).map_err(|e| e.to_string())?;
-        let encrypted = parcela::encrypt(&plaintext, &password).map_err(|e| e.to_string())?;
-        let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
-
-        std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
-        let base_name = input
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("file");
-
-        let mut output_paths = Vec::with_capacity(shares.len());
-        for share in shares.iter() {
-            let filename = format!("{base_name}.share{}", share.index);
-            let path = out_dir.join(filename);
-            let data = parcela::encode_share(share);
-            std::fs::write(&path, data).map_err(|e| e.to_string())?;
-            output_paths.push(path.to_string_lossy().to_string());
-        }
-
-        Ok(output_paths)
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -712,7 +682,25 @@ fn vdrive_export_file(drive_id: String, path: String) -> Result<String, String> 
 }
 
 fn main() {
+    // Check if a .pva file was passed as argument (file association)
+    let initial_file: Option<String> = std::env::args()
+        .nth(1)
+        .filter(|arg| arg.to_lowercase().ends_with(".pva") && std::path::Path::new(arg).exists());
+
     tauri::Builder::default()
+        .setup(move |app| {
+            // If launched with a .pva file, emit event to frontend
+            if let Some(file_path) = initial_file {
+                let window = app.get_webview_window("main").unwrap();
+                // Emit after a short delay to ensure frontend is ready
+                let file_path_clone = file_path.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let _ = window.emit("open-vault-file", file_path_clone);
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             pick_input_file,
             pick_destination_folder,
@@ -722,7 +710,6 @@ fn main() {
             pick_vault_file,
             pick_vault_save,
             pick_output_file,
-            split_file,
             combine_shares,
             create_vault,
             open_vault,

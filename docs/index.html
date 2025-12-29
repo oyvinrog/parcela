@@ -3,16 +3,68 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Parcela — Split-Key Encryption Vault</title>
-  <meta name="description" content="Military-grade encryption that requires both your password AND physical shares to decrypt. Your files are safe even if your password is stolen.">
+  <title>Parcela — Split-Key Encryption Vault | 2-of-3 Secret Sharing</title>
+  <meta name="description" content="Free open-source file encryption with 2-of-3 secret sharing. AES-256-GCM encryption that requires both your password AND physical shares to decrypt. Your files stay safe even if your password is stolen.">
+  <meta name="keywords" content="file encryption, secret sharing, Shamir's secret sharing, AES-256, split-key encryption, secure file storage, open source encryption, cross-platform encryption, Rust encryption tool, Tauri app">
+  <meta name="author" content="Parcela Contributors">
+  <meta name="robots" content="index, follow">
   <meta name="theme-color" content="#0f1419">
-  
-  <!-- Open Graph -->
-  <meta property="og:title" content="Parcela — Split-Key Encryption Vault">
-  <meta property="og:description" content="Your files require both your password and physical possession of shares to decrypt.">
-  <meta property="og:image" content="assets/logo.png">
+  <link rel="canonical" href="https://oyvinrog.github.io/parcela/">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="assets/logo.png">
+  <link rel="apple-touch-icon" href="assets/logo.png">
+
+  <!-- Open Graph / Facebook -->
   <meta property="og:type" content="website">
-  
+  <meta property="og:url" content="https://oyvinrog.github.io/parcela/">
+  <meta property="og:title" content="Parcela — Split-Key Encryption Vault">
+  <meta property="og:description" content="Free open-source file encryption with 2-of-3 secret sharing. Your files require both your password and physical possession of shares to decrypt.">
+  <meta property="og:image" content="https://oyvinrog.github.io/parcela/assets/logo.png">
+  <meta property="og:site_name" content="Parcela">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:url" content="https://oyvinrog.github.io/parcela/">
+  <meta name="twitter:title" content="Parcela — Split-Key Encryption Vault">
+  <meta name="twitter:description" content="Free open-source file encryption with 2-of-3 secret sharing. Your files require both your password and physical possession of shares to decrypt.">
+  <meta name="twitter:image" content="https://oyvinrog.github.io/parcela/assets/logo.png">
+
+  <!-- Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Parcela",
+    "applicationCategory": "SecurityApplication",
+    "operatingSystem": "Windows, macOS, Linux",
+    "description": "Split-key encryption vault with 2-of-3 secret sharing. AES-256-GCM encryption that requires both your password and physical shares to decrypt.",
+    "url": "https://oyvinrog.github.io/parcela/",
+    "downloadUrl": "https://github.com/oyvinrog/parcela/releases/latest",
+    "softwareVersion": "0.1.6",
+    "author": {
+      "@type": "Organization",
+      "name": "Parcela Contributors",
+      "url": "https://github.com/oyvinrog/parcela"
+    },
+    "license": "https://github.com/oyvinrog/parcela/blob/main/LICENSE",
+    "isAccessibleForFree": true,
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "featureList": [
+      "2-of-3 Secret Sharing",
+      "AES-256-GCM Encryption",
+      "Virtual RAM-backed Drive",
+      "Cross-Platform Support",
+      "Command Line Interface",
+      "Open Source"
+    ]
+  }
+  </script>
+
   <!-- Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -679,8 +731,8 @@
         <a href="#security">Security</a>
         <a href="#features">Features</a>
         <a href="#cli">CLI</a>
-        <a href="https://github.com/oyvinrog/parcela" class="btn btn-secondary">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        <a href="https://github.com/oyvinrog/parcela" class="btn btn-secondary" rel="noopener noreferrer" target="_blank">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
           GitHub
         </a>
       </div>
@@ -701,16 +753,16 @@
         Your files require <em>both</em> your password <em>and</em> physical possession of shares to decrypt. Even if your password is stolen, your data stays safe.
       </p>
       <div class="hero-cta">
-        <a href="https://github.com/oyvinrog/parcela/releases/latest" class="btn btn-primary">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        <a href="https://github.com/oyvinrog/parcela/releases/latest" class="btn btn-primary" rel="noopener noreferrer" target="_blank">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
           Download for Free
         </a>
-        <a href="https://github.com/oyvinrog/parcela" class="btn btn-secondary">
+        <a href="https://github.com/oyvinrog/parcela" class="btn btn-secondary" rel="noopener noreferrer" target="_blank">
           View on GitHub
         </a>
       </div>
       <div class="hero-demo">
-        <video autoplay loop muted playsinline>
+        <video autoplay loop muted playsinline poster="assets/parcela-demo-poster.jpg" title="Parcela encryption demo showing file splitting and recovery" aria-label="Demonstration video of Parcela file encryption workflow">
           <source src="assets/parcela-demo.mp4" type="video/mp4">
           <source src="assets/parcela-demo.webm" type="video/webm">
         </video>
@@ -864,7 +916,7 @@
           <span class="section-label">For Power Users</span>
           <h2>Full CLI support</h2>
           <p>Automate your encryption workflows with the command-line interface. Perfect for scripts, backups, and CI/CD pipelines.</p>
-          <a href="https://github.com/oyvinrog/parcela#cli-usage" class="btn btn-secondary">View Documentation</a>
+          <a href="https://github.com/oyvinrog/parcela#cli-usage" class="btn btn-secondary" rel="noopener noreferrer" target="_blank">View Documentation</a>
         </div>
         <div class="cli-window">
           <div class="cli-header">
@@ -932,12 +984,12 @@
       <h2>Ready to secure your files?</h2>
       <p>Download Parcela for free. Open source, no accounts required.</p>
       <div class="cta-buttons">
-        <a href="https://github.com/oyvinrog/parcela/releases/latest" class="btn btn-primary">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        <a href="https://github.com/oyvinrog/parcela/releases/latest" class="btn btn-primary" rel="noopener noreferrer" target="_blank">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
           Download Now
         </a>
-        <a href="https://github.com/oyvinrog/parcela" class="btn btn-secondary">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+        <a href="https://github.com/oyvinrog/parcela" class="btn btn-secondary" rel="noopener noreferrer" target="_blank">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
           Star on GitHub
         </a>
       </div>
@@ -948,9 +1000,9 @@
   <footer>
     <div class="container">
       <p>
-        Built with 🦀 Rust + Tauri — 
-        <a href="https://github.com/oyvinrog/parcela">Source Code</a> — 
-        <a href="https://github.com/oyvinrog/parcela/blob/main/LICENSE">MIT License</a>
+        Built with Rust + Tauri —
+        <a href="https://github.com/oyvinrog/parcela" rel="noopener noreferrer" target="_blank">Source Code</a> —
+        <a href="https://github.com/oyvinrog/parcela/blob/main/LICENSE" rel="noopener noreferrer" target="_blank">MIT License</a>
       </p>
     </div>
   </footer>

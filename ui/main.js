@@ -699,45 +699,6 @@ async function handleCreateVault() {
   }
 }
 
-async function handleAddFile() {
-  setResultText("");
-  try {
-    const inputPath = await invoke("pick_input_file");
-    if (!inputPath) return;
-    const outDir = await invoke("pick_output_dir");
-    if (!outDir) return;
-
-    setStatus("Encrypting and splitting...");
-    showLoading("Encrypting file…");
-    await waitForPaint();
-    const sharePaths = await invoke("split_file", {
-      inputPath,
-      outDir,
-      password: state.vaultPassword,
-    });
-    hideLoading();
-
-    const name = getFileName(inputPath);
-    const shares = [null, null, null];
-    sharePaths.forEach((path) => {
-      const info = getShareInfo(path);
-      if (info) shares[info.index - 1] = path;
-    });
-
-    const entry = addOrUpdateFileEntry({ name, shares });
-    await refreshAvailability(entry);
-    await saveVault();
-    state.selectedFileId = entry.id;
-    setSelectedFiles([entry.id]);
-    renderFileList();
-    renderDetail();
-    setStatus("File added to vault.", "success");
-  } catch (err) {
-    hideLoading();
-    setStatus(`Error: ${err}`, "error");
-  }
-}
-
 async function handleImportShares() {
   setResultText("");
   try {
@@ -1458,7 +1419,6 @@ vaultPasswordEl.addEventListener("keydown", (e) => {
 document.getElementById("open-vault").addEventListener("click", handleOpenVault);
 document.getElementById("create-vault").addEventListener("click", handleCreateVault);
 
-document.getElementById("add-file").addEventListener("click", handleAddFile);
 document.getElementById("add-virtual-drive").addEventListener("click", handleCreateVirtualDrive);
 document.getElementById("refresh-status").addEventListener("click", handleRefreshStatus);
 selectAllEl.addEventListener("change", () => {
@@ -1503,6 +1463,89 @@ fbDeleteBtn.addEventListener("click", handleFBDelete);
     console.warn("Failed to check platform capabilities:", err);
   }
 })();
+
+// Handle file association: when a .pva file is opened from the OS
+let pendingVaultPath = null;
+
+// Listen for open-vault-file event from backend (file association)
+if (window.__TAURI__?.event?.listen) {
+  window.__TAURI__.event.listen("open-vault-file", (event) => {
+    console.log("[Parcela] Received open-vault-file event:", event.payload);
+    pendingVaultPath = event.payload;
+    // Update UI to show which file will be opened
+    vaultCurrentPathEl.textContent = pendingVaultPath;
+    vaultNameEl.textContent = getFileName(pendingVaultPath);
+    setStatus(`Enter password to open: ${getFileName(pendingVaultPath)}`, "success");
+    // Focus the password field
+    vaultPasswordEl.focus();
+  });
+}
+
+// Modify open vault to use pending path if available
+const originalHandleOpenVault = handleOpenVault;
+handleOpenVault = async function() {
+  const password = vaultPasswordEl.value.trim();
+  if (!password) {
+    setStatus("Enter the vault password.", "error");
+    return;
+  }
+
+  // Use pending path from file association, or pick a file
+  let vaultPath = pendingVaultPath;
+  if (!vaultPath) {
+    vaultPath = await invoke("pick_vault_file");
+    if (!vaultPath) return;
+  }
+
+  // Clear pending path
+  pendingVaultPath = null;
+
+  try {
+    setStatus("Opening vault...");
+    showLoading("Unlocking vault…");
+    await waitForPaint();
+    const vault = await invoke("open_vault", {
+      path: vaultPath,
+      password,
+    });
+    hideLoading();
+    state.vaultPath = vaultPath;
+    state.vaultPassword = password;
+    state.vault = vault;
+    // Ensure virtual_drives array exists
+    if (!state.vault.virtual_drives) {
+      state.vault.virtual_drives = [];
+    }
+    await refreshAllAvailability();
+    await refreshUnlockedDrives();
+
+    // Select first item (drive or file)
+    const drives = state.vault.virtual_drives || [];
+    const files = state.vault.files || [];
+    if (drives.length > 0) {
+      state.selectedFileId = drives[0].id;
+      state.selectedType = "drive";
+    } else if (files.length > 0) {
+      state.selectedFileId = files[0].id;
+      state.selectedType = "file";
+    } else {
+      state.selectedFileId = null;
+      state.selectedType = "file";
+    }
+    setSelectedFiles(state.selectedFileId && state.selectedType === "file" ? [state.selectedFileId] : []);
+    renderFileList();
+    renderDetail();
+    showVaultScreen();
+    setStatus("Vault open.", "success");
+  } catch (err) {
+    hideLoading();
+    setStatus(`Error: ${err}`, "error");
+  }
+};
+
+// Re-attach click handler with new implementation
+document.getElementById("open-vault").removeEventListener("click", originalHandleOpenVault);
+document.getElementById("open-vault").addEventListener("click", handleOpenVault);
 
 showLoginScreen();
 renderFileList();
