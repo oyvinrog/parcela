@@ -144,6 +144,14 @@ pub struct ProjFsMount {
     fs: Arc<RwLock<MemoryFileSystem>>,
 }
 
+// SAFETY: ProjFsMount is safe to send between threads because:
+// - `_projfs` is a Windows ProjFS handle that is not accessed concurrently
+// - `root_path` is a PathBuf which is Send+Sync
+// - `fs` is an Arc<RwLock<...>> which is Send+Sync
+// The ProjFS handle is only held for the lifetime of the mount and dropped on unmount.
+unsafe impl Send for ProjFsMount {}
+unsafe impl Sync for ProjFsMount {}
+
 impl ProjFsMount {
     /// Mount a MemoryFileSystem as a ProjFS virtualization root
     pub fn mount(fs: MemoryFileSystem, volume_label: &str, root_path: PathBuf) -> Result<Self, String> {
