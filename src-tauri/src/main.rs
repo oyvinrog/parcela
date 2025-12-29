@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use rfd::FileDialog;
+use tauri::{Emitter, Manager};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -681,7 +682,25 @@ fn vdrive_export_file(drive_id: String, path: String) -> Result<String, String> 
 }
 
 fn main() {
+    // Check if a .pva file was passed as argument (file association)
+    let initial_file: Option<String> = std::env::args()
+        .nth(1)
+        .filter(|arg| arg.to_lowercase().ends_with(".pva") && std::path::Path::new(arg).exists());
+
     tauri::Builder::default()
+        .setup(move |app| {
+            // If launched with a .pva file, emit event to frontend
+            if let Some(file_path) = initial_file {
+                let window = app.get_webview_window("main").unwrap();
+                // Emit after a short delay to ensure frontend is ready
+                let file_path_clone = file_path.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let _ = window.emit("open-vault-file", file_path_clone);
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             pick_input_file,
             pick_destination_folder,

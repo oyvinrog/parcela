@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-parcela-vault">
+    <comment>Parcela Vault Archive</comment>
+    <comment xml:lang="en">Parcela Vault Archive</comment>
+    <glob pattern="*.pva"/>
+    <icon name="parcela"/>
+  </mime-type>
+</mime-info>

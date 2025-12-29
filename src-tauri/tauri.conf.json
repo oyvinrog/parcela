@@ -30,6 +30,26 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "fileAssociations": [
+      {
+        "ext": ["pva"],
+        "name": "Parcela Vault Archive",
+        "description": "Parcela virtual drive archive",
+        "mimeType": "application/x-parcela-vault"
+      }
+    ],
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/mime/packages/parcela.xml": "linux/parcela.xml"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/share/mime/packages/parcela.xml": "linux/parcela.xml"
+        }
+      }
+    },
     "windows": {
       "nsis": {
         "installerHooks": "nsis/installer-hooks.nsh"
