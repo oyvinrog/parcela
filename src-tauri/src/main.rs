@@ -147,37 +147,6 @@ fn pick_output_file() -> Option<String> {
 }
 
 #[tauri::command]
-async fn split_file(input_path: String, out_dir: String, password: String) -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let input = std::path::PathBuf::from(&input_path);
-        let out_dir = std::path::PathBuf::from(&out_dir);
-
-        let plaintext = std::fs::read(&input).map_err(|e| e.to_string())?;
-        let encrypted = parcela::encrypt(&plaintext, &password).map_err(|e| e.to_string())?;
-        let shares = parcela::split_shares(&encrypted).map_err(|e| e.to_string())?;
-
-        std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
-        let base_name = input
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("file");
-
-        let mut output_paths = Vec::with_capacity(shares.len());
-        for share in shares.iter() {
-            let filename = format!("{base_name}.share{}", share.index);
-            let path = out_dir.join(filename);
-            let data = parcela::encode_share(share);
-            std::fs::write(&path, data).map_err(|e| e.to_string())?;
-            output_paths.push(path.to_string_lossy().to_string());
-        }
-
-        Ok(output_paths)
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
 async fn combine_shares(
     share_paths: Vec<String>,
     output_path: String,
@@ -722,7 +691,6 @@ fn main() {
             pick_vault_file,
             pick_vault_save,
             pick_output_file,
-            split_file,
             combine_shares,
             create_vault,
             open_vault,

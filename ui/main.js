@@ -699,45 +699,6 @@ async function handleCreateVault() {
   }
 }
 
-async function handleAddFile() {
-  setResultText("");
-  try {
-    const inputPath = await invoke("pick_input_file");
-    if (!inputPath) return;
-    const outDir = await invoke("pick_output_dir");
-    if (!outDir) return;
-
-    setStatus("Encrypting and splitting...");
-    showLoading("Encrypting file…");
-    await waitForPaint();
-    const sharePaths = await invoke("split_file", {
-      inputPath,
-      outDir,
-      password: state.vaultPassword,
-    });
-    hideLoading();
-
-    const name = getFileName(inputPath);
-    const shares = [null, null, null];
-    sharePaths.forEach((path) => {
-      const info = getShareInfo(path);
-      if (info) shares[info.index - 1] = path;
-    });
-
-    const entry = addOrUpdateFileEntry({ name, shares });
-    await refreshAvailability(entry);
-    await saveVault();
-    state.selectedFileId = entry.id;
-    setSelectedFiles([entry.id]);
-    renderFileList();
-    renderDetail();
-    setStatus("File added to vault.", "success");
-  } catch (err) {
-    hideLoading();
-    setStatus(`Error: ${err}`, "error");
-  }
-}
-
 async function handleImportShares() {
   setResultText("");
   try {
@@ -1458,7 +1419,6 @@ vaultPasswordEl.addEventListener("keydown", (e) => {
 document.getElementById("open-vault").addEventListener("click", handleOpenVault);
 document.getElementById("create-vault").addEventListener("click", handleCreateVault);
 
-document.getElementById("add-file").addEventListener("click", handleAddFile);
 document.getElementById("add-virtual-drive").addEventListener("click", handleCreateVirtualDrive);
 document.getElementById("refresh-status").addEventListener("click", handleRefreshStatus);
 selectAllEl.addEventListener("change", () => {
