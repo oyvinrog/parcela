@@ -217,6 +217,10 @@ impl ProjFsMount {
 
     /// Unmount the filesystem and return the MemoryFileSystem
     pub fn unmount(self) -> MemoryFileSystem {
+        // Before stopping virtualization, capture any files that Windows created
+        // directly in the virtualization root (not through our MemoryFileSystem)
+        self.capture_disk_files(&self.root_path, "");
+
         // The ProjectedFileSystem will be dropped, stopping the virtualization
 
         // Try to clean up the virtualization root
@@ -230,6 +234,61 @@ impl ProjFsMount {
             Err(arc) => {
                 // Fallback: clone the data if Arc is still shared
                 arc.read().clone()
+            }
+        }
+    }
+
+    /// Capture files from disk that were created directly via Windows Explorer
+    fn capture_disk_files(&self, dir: &Path, relative_path: &str) {
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = match entry.file_name().into_string() {
+                Ok(name) => name,
+                Err(_) => continue,
+            };
+
+            let full_relative = if relative_path.is_empty() {
+                name.clone()
+            } else {
+                format!("{}/{}", relative_path, name)
+            };
+
+            if path.is_dir() {
+                // Ensure directory exists in MemoryFileSystem
+                {
+                    let mut fs = self.fs.write();
+                    fs.create_dir_all(&full_relative);
+                }
+                // Recurse into subdirectory
+                self.capture_disk_files(&path, &full_relative);
+            } else if path.is_file() {
+                // Read file content from disk
+                if let Ok(disk_content) = std::fs::read(&path) {
+                    let mut fs = self.fs.write();
+                    // Check if file exists in MemoryFileSystem
+                    let memory_content = fs.read_file(&full_relative).cloned();
+
+                    match memory_content {
+                        None => {
+                            // New file created by user via Windows Explorer
+                            eprintln!("[ProjFS] Capturing user-created file: {}", full_relative);
+                            fs.write_file(&full_relative, disk_content);
+                        }
+                        Some(existing) if existing != disk_content => {
+                            // User modified an existing file via Windows Explorer
+                            eprintln!("[ProjFS] Capturing user-modified file: {}", full_relative);
+                            fs.write_file(&full_relative, disk_content);
+                        }
+                        _ => {
+                            // File unchanged, already in MemoryFileSystem
+                        }
+                    }
+                }
             }
         }
     }

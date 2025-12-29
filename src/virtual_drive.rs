@@ -996,6 +996,7 @@ fn capture_mount_content(mount_path: &Path) -> Result<Vec<u8>, VirtualDriveError
 }
 
 /// Extract archived content to a mount point
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), VirtualDriveError> {
     let mut offset = 0;
 

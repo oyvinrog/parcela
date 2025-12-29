@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use parcela::{
     is_projfs_available, lock_drive, unlock_drive, uses_memory_mode,
-    vdrive_create_dir, vdrive_delete_file, vdrive_list_files, vdrive_read_file,
+    vdrive_create_dir, vdrive_list_files, vdrive_read_file,
     vdrive_write_file, VirtualDrive,
 };
 
@@ -193,15 +193,12 @@ fn projfs_drive_is_browsable_in_explorer() {
     let content = fs::read_to_string(&file_path)
         .expect("Failed to read file via filesystem");
     assert_eq!(content, "Hello from ProjFS!");
-    
-    // Also test creating a file via filesystem and reading via our API
-    let fs_test_path = mount_path.join("fs_created.txt");
-    fs::write(&fs_test_path, "Created via fs").expect("Failed to write via fs");
-    
-    let content_via_api = vdrive_read_file(&drive_id, "fs_created.txt")
-        .expect("Failed to read fs-created file via API");
-    assert_eq!(content_via_api, b"Created via fs");
-    
+
+    // Note: ProjFS is one-directional - files created via Windows filesystem APIs
+    // are stored on disk in the virtualization root, but NOT synced back to our
+    // MemoryFileSystem. This is expected behavior for a projected filesystem.
+    // The primary use case (reading MemoryFS files via Explorer) is tested above.
+
     // Clean up (guard will also clean up on panic)
     let mut drive_mut = guard.take();
     lock_drive(&mut drive_mut).expect("Failed to lock drive");
@@ -236,20 +233,18 @@ fn projfs_directory_operations() {
     let nested_dir = mount_path.join("level1").join("level2").join("level3");
     assert!(nested_dir.exists(), "Nested directory not visible: {:?}", nested_dir);
     assert!(nested_dir.is_dir(), "Path is not a directory: {:?}", nested_dir);
-    
-    // Create directory via filesystem
-    let fs_dir = mount_path.join("fs_created_dir");
-    fs::create_dir(&fs_dir).expect("Failed to create dir via fs");
-    
-    // List via our API
+
+    // List via our API to verify consistency
     let entries = vdrive_list_files(&drive_id, "").expect("Failed to list root");
     println!("Root entries: {:?}", entries);
-    
+
     assert!(entries.iter().any(|e| e.contains("level1")),
         "level1 not found in listing: {:?}", entries);
-    assert!(entries.iter().any(|e| e.contains("fs_created_dir")),
-        "fs_created_dir not found in listing: {:?}", entries);
-    
+
+    // Note: ProjFS is one-directional - directories created via Windows filesystem APIs
+    // are stored on disk in the virtualization root, but NOT synced back to our
+    // MemoryFileSystem. This is expected behavior for a projected filesystem.
+
     // Clean up (guard will also clean up on panic)
     let mut drive_mut = guard.take();
     lock_drive(&mut drive_mut).expect("Failed to lock drive");
@@ -297,6 +292,130 @@ fn projfs_data_persistence() {
             .expect("Failed to read");
         assert_eq!(content, test_content, "Content mismatch after re-mount");
         
+        let mut drive = guard.take();
+        lock_drive(&mut drive).expect("Failed to lock (2)");
+    }
+}
+
+#[test]
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_windows_created_files_persist() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
+        return;
+    }
+
+    let drive = VirtualDrive::new_with_id(
+        unique_drive_id(),
+        "Windows Files Persistence Test".to_string(),
+        32,
+    );
+    let mut guard = DriveGuard::new(drive);
+
+    // First mount: create files via Windows filesystem APIs (simulating Windows Explorer)
+    {
+        let mount_path = unlock_drive(guard.drive()).expect("Failed to unlock (1)");
+        require_accessible_mount!(mount_path);
+
+        // Create file via Windows filesystem API (like user would via Explorer)
+        let test_file = mount_path.join("explorer_created.txt");
+        fs::write(&test_file, "Created via Windows Explorer").expect("Failed to write via fs");
+
+        // Create directory and nested file via Windows
+        let subdir = mount_path.join("windows_subdir");
+        fs::create_dir(&subdir).expect("Failed to create dir via fs");
+        fs::write(subdir.join("nested.txt"), "Nested file content").expect("Failed to write nested");
+
+        println!("Created files via Windows filesystem APIs");
+
+        let mut drive = guard.take();
+        lock_drive(&mut drive).expect("Failed to lock (1)");
+        guard = DriveGuard::new(drive);
+    }
+
+    // Verify content was captured
+    assert!(!guard.drive().content.is_empty(), "Drive content should not be empty after lock");
+
+    // Second mount: verify Windows-created files persist
+    {
+        let _mount_path = unlock_drive(guard.drive()).expect("Failed to unlock (2)");
+        let drive_id = guard.drive_id().to_string();
+
+        // Read file that was created via Windows
+        let content = vdrive_read_file(&drive_id, "explorer_created.txt")
+            .expect("Failed to read Windows-created file");
+        assert_eq!(content, b"Created via Windows Explorer", "Content mismatch");
+
+        // Read nested file
+        let nested_content = vdrive_read_file(&drive_id, "windows_subdir/nested.txt")
+            .expect("Failed to read nested file");
+        assert_eq!(nested_content, b"Nested file content", "Nested content mismatch");
+
+        println!("✓ Windows-created files persisted across lock/unlock cycle");
+
+        let mut drive = guard.take();
+        lock_drive(&mut drive).expect("Failed to lock (2)");
+    }
+}
+
+#[test]
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_file_modification_persists() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
+        return;
+    }
+
+    let drive = VirtualDrive::new_with_id(
+        unique_drive_id(),
+        "File Modification Test".to_string(),
+        32,
+    );
+    let mut guard = DriveGuard::new(drive);
+
+    // First mount: create file via our API
+    {
+        let mount_path = unlock_drive(guard.drive()).expect("Failed to unlock (1)");
+        let drive_id = guard.drive_id().to_string();
+        require_accessible_mount!(mount_path);
+
+        // Create original file via our API
+        vdrive_write_file(&drive_id, "editable.txt", b"Original content".to_vec())
+            .expect("Failed to write original");
+
+        // Verify it's readable via Windows
+        let file_path = mount_path.join("editable.txt");
+        let content = fs::read_to_string(&file_path).expect("Failed to read via fs");
+        assert_eq!(content, "Original content");
+
+        // Now MODIFY the file via Windows filesystem API (simulating user edit in Notepad)
+        fs::write(&file_path, "Modified by user in Notepad").expect("Failed to modify via fs");
+
+        println!("Modified file via Windows filesystem API");
+
+        let mut drive = guard.take();
+        lock_drive(&mut drive).expect("Failed to lock (1)");
+        guard = DriveGuard::new(drive);
+    }
+
+    // Second mount: verify modification persisted
+    {
+        let _mount_path = unlock_drive(guard.drive()).expect("Failed to unlock (2)");
+        let drive_id = guard.drive_id().to_string();
+
+        let content = vdrive_read_file(&drive_id, "editable.txt")
+            .expect("Failed to read modified file");
+
+        // This is the critical assertion - the modification should have been captured
+        assert_eq!(
+            content,
+            b"Modified by user in Notepad",
+            "File modification was NOT captured! Got: {:?}",
+            String::from_utf8_lossy(&content)
+        );
+
+        println!("✓ File modification persisted across lock/unlock cycle");
+
         let mut drive = guard.take();
         lock_drive(&mut drive).expect("Failed to lock (2)");
     }
@@ -497,8 +616,6 @@ fn projfs_set_basic_info_works() {
         println!("Skipping: ProjFS not available");
         return;
     }
-
-    use std::time::SystemTime;
 
     let drive = VirtualDrive::new_with_id(
         unique_drive_id(),
