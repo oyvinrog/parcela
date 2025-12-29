@@ -1,12 +1,13 @@
-//! WinFsp Integration Tests
+//! ProjFS Integration Tests
 //!
-//! These tests verify the WinFsp virtual drive functionality on Windows.
-//! They only run on Windows and require WinFsp to be installed.
+//! These tests verify the ProjFS virtual drive functionality on Windows.
+//! They only run on Windows and require ProjFS to be enabled.
 //!
-//! Run with: cargo test --test winfsp_integration -- --ignored --test-threads=1
+//! Enable ProjFS: Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS
 //!
-//! Note: Tests MUST run serially (--test-threads=1) because they compete for
-//! drive letters. Each test mounts a drive on an available letter (starting from P:).
+//! Run with: cargo test --test projfs_integration -- --ignored --test-threads=1
+//!
+//! Note: Tests MUST run serially (--test-threads=1) because they may compete for resources.
 
 #![cfg(target_os = "windows")]
 
@@ -15,8 +16,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use parcela::{
-    is_winfsp_available, lock_drive, unlock_drive, uses_memory_mode,
-    vdrive_create_dir, vdrive_delete_file, vdrive_list_files, vdrive_read_file,
+    is_projfs_available, lock_drive, unlock_drive, uses_memory_mode,
+    vdrive_create_dir, vdrive_list_files, vdrive_read_file,
     vdrive_write_file, VirtualDrive,
 };
 
@@ -66,7 +67,7 @@ impl Drop for DriveGuard {
 }
 
 /// Check if the mount path is accessible through the filesystem
-/// Returns true if the WinFsp mount is actually working
+/// Returns true if the ProjFS mount is actually working
 fn is_mount_accessible(mount_path: &std::path::Path) -> bool {
     // Give it a moment to become ready
     for attempt in 0..30 {
@@ -81,53 +82,53 @@ fn is_mount_accessible(mount_path: &std::path::Path) -> bool {
     false
 }
 
-/// Skip test if WinFsp mount isn't actually working through the filesystem
-/// This can happen if WinFsp callbacks aren't functioning properly
+/// Skip test if ProjFS mount isn't actually working through the filesystem
+/// This can happen if ProjFS callbacks aren't functioning properly
 macro_rules! require_accessible_mount {
     ($mount_path:expr) => {
         if !is_mount_accessible(&$mount_path) {
             println!("SKIP: Mount path {:?} is not accessible via filesystem", $mount_path);
-            println!("WinFsp callbacks may not be functioning correctly");
-            println!("The vdrive_* API still works (bypasses WinFsp callbacks)");
+            println!("ProjFS callbacks may not be functioning correctly");
+            println!("The vdrive_* API still works (bypasses ProjFS callbacks)");
             return;
         }
     };
 }
 
 #[test]
-fn winfsp_is_detected() {
-    let available = is_winfsp_available();
-    println!("WinFsp available: {}", available);
+fn projfs_is_detected() {
+    let available = is_projfs_available();
+    println!("ProjFS available: {}", available);
     
-    // On Windows, if WinFsp is installed, this should return true
+    // On Windows, if ProjFS is installed, this should return true
     // We can't assert it's true because it might not be installed in CI
     // But we can verify the function runs without panicking
 }
 
 #[test]
-fn memory_mode_reflects_winfsp_availability() {
+fn memory_mode_reflects_projfs_availability() {
     let memory_mode = uses_memory_mode();
-    let winfsp_available = is_winfsp_available();
+    let projfs_available = is_projfs_available();
     
-    // Memory mode should be the opposite of WinFsp availability
-    assert_eq!(memory_mode, !winfsp_available,
-        "Memory mode should be {} when WinFsp is {}",
-        !winfsp_available,
-        if winfsp_available { "available" } else { "not available" }
+    // Memory mode should be the opposite of ProjFS availability
+    assert_eq!(memory_mode, !projfs_available,
+        "Memory mode should be {} when ProjFS is {}",
+        !projfs_available,
+        if projfs_available { "available" } else { "not available" }
     );
 }
 
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_mount_creates_drive_letter() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_mount_creates_drive_letter() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 
     let drive = VirtualDrive::new_with_id(
         unique_drive_id(),
-        "WinFsp Test Drive".to_string(),
+        "ProjFS Test Drive".to_string(),
         32,
     );
     let mut guard = DriveGuard::new(drive);
@@ -143,7 +144,7 @@ fn winfsp_mount_creates_drive_letter() {
     assert!(mount_str.chars().next().unwrap().is_ascii_uppercase(),
         "Expected drive letter, got: {}", mount_str);
     
-    // Verify the path exists (may need to wait for WinFsp to be ready)
+    // Verify the path exists (may need to wait for ProjFS to be ready)
     require_accessible_mount!(mount_path);
     
     // Clean up
@@ -158,10 +159,10 @@ fn winfsp_mount_creates_drive_letter() {
 }
 
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_drive_is_browsable_in_explorer() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_drive_is_browsable_in_explorer() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 
@@ -179,7 +180,7 @@ fn winfsp_drive_is_browsable_in_explorer() {
     require_accessible_mount!(mount_path);
     
     // Create a test file using our API
-    vdrive_write_file(&drive_id, "test.txt", b"Hello from WinFsp!".to_vec())
+    vdrive_write_file(&drive_id, "test.txt", b"Hello from ProjFS!".to_vec())
         .expect("Failed to write file");
     
     // Now try to read it using standard Windows filesystem APIs
@@ -191,26 +192,23 @@ fn winfsp_drive_is_browsable_in_explorer() {
     
     let content = fs::read_to_string(&file_path)
         .expect("Failed to read file via filesystem");
-    assert_eq!(content, "Hello from WinFsp!");
-    
-    // Also test creating a file via filesystem and reading via our API
-    let fs_test_path = mount_path.join("fs_created.txt");
-    fs::write(&fs_test_path, "Created via fs").expect("Failed to write via fs");
-    
-    let content_via_api = vdrive_read_file(&drive_id, "fs_created.txt")
-        .expect("Failed to read fs-created file via API");
-    assert_eq!(content_via_api, b"Created via fs");
-    
+    assert_eq!(content, "Hello from ProjFS!");
+
+    // Note: ProjFS is one-directional - files created via Windows filesystem APIs
+    // are stored on disk in the virtualization root, but NOT synced back to our
+    // MemoryFileSystem. This is expected behavior for a projected filesystem.
+    // The primary use case (reading MemoryFS files via Explorer) is tested above.
+
     // Clean up (guard will also clean up on panic)
     let mut drive_mut = guard.take();
     lock_drive(&mut drive_mut).expect("Failed to lock drive");
 }
 
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_directory_operations() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_directory_operations() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 
@@ -235,30 +233,28 @@ fn winfsp_directory_operations() {
     let nested_dir = mount_path.join("level1").join("level2").join("level3");
     assert!(nested_dir.exists(), "Nested directory not visible: {:?}", nested_dir);
     assert!(nested_dir.is_dir(), "Path is not a directory: {:?}", nested_dir);
-    
-    // Create directory via filesystem
-    let fs_dir = mount_path.join("fs_created_dir");
-    fs::create_dir(&fs_dir).expect("Failed to create dir via fs");
-    
-    // List via our API
+
+    // List via our API to verify consistency
     let entries = vdrive_list_files(&drive_id, "").expect("Failed to list root");
     println!("Root entries: {:?}", entries);
-    
+
     assert!(entries.iter().any(|e| e.contains("level1")),
         "level1 not found in listing: {:?}", entries);
-    assert!(entries.iter().any(|e| e.contains("fs_created_dir")),
-        "fs_created_dir not found in listing: {:?}", entries);
-    
+
+    // Note: ProjFS is one-directional - directories created via Windows filesystem APIs
+    // are stored on disk in the virtualization root, but NOT synced back to our
+    // MemoryFileSystem. This is expected behavior for a projected filesystem.
+
     // Clean up (guard will also clean up on panic)
     let mut drive_mut = guard.take();
     lock_drive(&mut drive_mut).expect("Failed to lock drive");
 }
 
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_data_persistence() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_data_persistence() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 
@@ -302,10 +298,134 @@ fn winfsp_data_persistence() {
 }
 
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_large_file_handling() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_windows_created_files_persist() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
+        return;
+    }
+
+    let drive = VirtualDrive::new_with_id(
+        unique_drive_id(),
+        "Windows Files Persistence Test".to_string(),
+        32,
+    );
+    let mut guard = DriveGuard::new(drive);
+
+    // First mount: create files via Windows filesystem APIs (simulating Windows Explorer)
+    {
+        let mount_path = unlock_drive(guard.drive()).expect("Failed to unlock (1)");
+        require_accessible_mount!(mount_path);
+
+        // Create file via Windows filesystem API (like user would via Explorer)
+        let test_file = mount_path.join("explorer_created.txt");
+        fs::write(&test_file, "Created via Windows Explorer").expect("Failed to write via fs");
+
+        // Create directory and nested file via Windows
+        let subdir = mount_path.join("windows_subdir");
+        fs::create_dir(&subdir).expect("Failed to create dir via fs");
+        fs::write(subdir.join("nested.txt"), "Nested file content").expect("Failed to write nested");
+
+        println!("Created files via Windows filesystem APIs");
+
+        let mut drive = guard.take();
+        lock_drive(&mut drive).expect("Failed to lock (1)");
+        guard = DriveGuard::new(drive);
+    }
+
+    // Verify content was captured
+    assert!(!guard.drive().content.is_empty(), "Drive content should not be empty after lock");
+
+    // Second mount: verify Windows-created files persist
+    {
+        let _mount_path = unlock_drive(guard.drive()).expect("Failed to unlock (2)");
+        let drive_id = guard.drive_id().to_string();
+
+        // Read file that was created via Windows
+        let content = vdrive_read_file(&drive_id, "explorer_created.txt")
+            .expect("Failed to read Windows-created file");
+        assert_eq!(content, b"Created via Windows Explorer", "Content mismatch");
+
+        // Read nested file
+        let nested_content = vdrive_read_file(&drive_id, "windows_subdir/nested.txt")
+            .expect("Failed to read nested file");
+        assert_eq!(nested_content, b"Nested file content", "Nested content mismatch");
+
+        println!("✓ Windows-created files persisted across lock/unlock cycle");
+
+        let mut drive = guard.take();
+        lock_drive(&mut drive).expect("Failed to lock (2)");
+    }
+}
+
+#[test]
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_file_modification_persists() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
+        return;
+    }
+
+    let drive = VirtualDrive::new_with_id(
+        unique_drive_id(),
+        "File Modification Test".to_string(),
+        32,
+    );
+    let mut guard = DriveGuard::new(drive);
+
+    // First mount: create file via our API
+    {
+        let mount_path = unlock_drive(guard.drive()).expect("Failed to unlock (1)");
+        let drive_id = guard.drive_id().to_string();
+        require_accessible_mount!(mount_path);
+
+        // Create original file via our API
+        vdrive_write_file(&drive_id, "editable.txt", b"Original content".to_vec())
+            .expect("Failed to write original");
+
+        // Verify it's readable via Windows
+        let file_path = mount_path.join("editable.txt");
+        let content = fs::read_to_string(&file_path).expect("Failed to read via fs");
+        assert_eq!(content, "Original content");
+
+        // Now MODIFY the file via Windows filesystem API (simulating user edit in Notepad)
+        fs::write(&file_path, "Modified by user in Notepad").expect("Failed to modify via fs");
+
+        println!("Modified file via Windows filesystem API");
+
+        let mut drive = guard.take();
+        lock_drive(&mut drive).expect("Failed to lock (1)");
+        guard = DriveGuard::new(drive);
+    }
+
+    // Second mount: verify modification persisted
+    {
+        let _mount_path = unlock_drive(guard.drive()).expect("Failed to unlock (2)");
+        let drive_id = guard.drive_id().to_string();
+
+        let content = vdrive_read_file(&drive_id, "editable.txt")
+            .expect("Failed to read modified file");
+
+        // This is the critical assertion - the modification should have been captured
+        assert_eq!(
+            content,
+            b"Modified by user in Notepad",
+            "File modification was NOT captured! Got: {:?}",
+            String::from_utf8_lossy(&content)
+        );
+
+        println!("✓ File modification persisted across lock/unlock cycle");
+
+        let mut drive = guard.take();
+        lock_drive(&mut drive).expect("Failed to lock (2)");
+    }
+}
+
+#[test]
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_large_file_handling() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 
@@ -339,10 +459,10 @@ fn winfsp_large_file_handling() {
 /// Test that is_memory_mode correctly reflects the mount type
 /// This is critical for the UI to know whether to show "Open in Explorer" or "Browse Files"
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_mounted_drive_is_not_memory_mode() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_mounted_drive_is_not_memory_mode() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 
@@ -357,16 +477,16 @@ fn winfsp_mounted_drive_is_not_memory_mode() {
     // Before mounting, drive shouldn't be mounted at all
     assert!(!parcela::is_mounted(&drive_id), "Drive should not be mounted initially");
 
-    // After mounting with WinFsp available, should NOT be in memory mode
+    // After mounting with ProjFS available, should NOT be in memory mode
     let mount_path = unlock_drive(guard.drive()).expect("Failed to unlock drive");
     
     // This is the key assertion that the UI relies on
     let is_mem = parcela::is_memory_mode(&drive_id);
     println!("Mount path: {:?}, is_memory_mode: {}", mount_path, is_mem);
     
-    // With WinFsp available and mount successful, should NOT be memory mode
+    // With ProjFS available and mount successful, should NOT be memory mode
     assert!(!is_mem, 
-        "Drive mounted with WinFsp should NOT be in memory mode. \
+        "Drive mounted with ProjFS should NOT be in memory mode. \
          Mount path: {:?}", mount_path);
     
     // The mount path should be a proper drive letter
@@ -379,24 +499,24 @@ fn winfsp_mounted_drive_is_not_memory_mode() {
     lock_drive(&mut drive_mut).expect("Failed to lock drive");
 }
 
-/// Test that uses_memory_mode() returns true when WinFsp is NOT available
-/// This test doesn't require WinFsp - it tests the fallback behavior
+/// Test that uses_memory_mode() returns true when ProjFS is NOT available
+/// This test doesn't require ProjFS - it tests the fallback behavior
 #[test]
-fn memory_mode_fallback_when_winfsp_unavailable() {
-    // This test runs regardless of WinFsp availability
+fn memory_mode_fallback_when_projfs_unavailable() {
+    // This test runs regardless of ProjFS availability
     // It just verifies the relationship between the two functions
     
-    let winfsp_available = is_winfsp_available();
+    let projfs_available = is_projfs_available();
     let memory_mode = uses_memory_mode();
     
-    println!("WinFsp available: {}, uses_memory_mode: {}", winfsp_available, memory_mode);
+    println!("ProjFS available: {}, uses_memory_mode: {}", projfs_available, memory_mode);
     
-    // On Windows: memory_mode should be the inverse of winfsp_available
-    // On other platforms: both should be false (Linux/macOS use tmpfs, not WinFsp)
+    // On Windows: memory_mode should be the inverse of projfs_available
+    // On other platforms: both should be false (Linux/macOS use tmpfs, not ProjFS)
     if cfg!(target_os = "windows") {
-        assert_eq!(memory_mode, !winfsp_available,
-            "On Windows, memory_mode ({}) should be the inverse of winfsp_available ({})",
-            memory_mode, winfsp_available);
+        assert_eq!(memory_mode, !projfs_available,
+            "On Windows, memory_mode ({}) should be the inverse of projfs_available ({})",
+            memory_mode, projfs_available);
     } else {
         assert!(!memory_mode,
             "On non-Windows, should not use memory mode (uses tmpfs)");
@@ -412,10 +532,10 @@ fn memory_mode_fallback_when_winfsp_unavailable() {
 /// 
 /// If set_file_size is not implemented, users get "0x8000FFFF: Catastrophic failure"
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_set_file_size_works() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_set_file_size_works() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 
@@ -490,14 +610,12 @@ fn winfsp_set_file_size_works() {
 /// Windows Explorer and many apps call SetFileTime/SetFileAttributes which
 /// triggers the set_basic_info callback. If not implemented, file operations fail.
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_set_basic_info_works() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_set_basic_info_works() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
-
-    use std::time::SystemTime;
 
     let drive = VirtualDrive::new_with_id(
         unique_drive_id(),
@@ -563,10 +681,10 @@ fn winfsp_set_basic_info_works() {
 /// Windows Explorer queries volume info to show free space. If not implemented,
 /// the drive may show incorrect or no capacity information.
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_volume_info_works() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_volume_info_works() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 
@@ -612,10 +730,10 @@ fn winfsp_volume_info_works() {
 /// 
 /// If rename is not implemented, users get "Invalid MS-DOS function"
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_rename_works() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_rename_works() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 
@@ -683,10 +801,10 @@ fn winfsp_rename_works() {
 /// 3. Set attributes/timestamps
 /// 4. Write content
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_explorer_new_file_pattern() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_explorer_new_file_pattern() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 
@@ -747,10 +865,10 @@ fn winfsp_explorer_new_file_pattern() {
 /// 2. Reads from source, writes to destination (possibly with write_to_eof)
 /// 3. Sets file timestamps via set_basic_info
 #[test]
-#[ignore = "Requires WinFsp installed - run with --ignored"]
-fn winfsp_copy_file_works() {
-    if !is_winfsp_available() {
-        println!("Skipping: WinFsp not available");
+#[ignore = "Requires ProjFS installed - run with --ignored"]
+fn projfs_copy_file_works() {
+    if !is_projfs_available() {
+        println!("Skipping: ProjFS not available");
         return;
     }
 

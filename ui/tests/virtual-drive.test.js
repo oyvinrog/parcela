@@ -2,41 +2,41 @@
  * Virtual Drive UI Tests
  * 
  * These tests verify the UI logic for virtual drive handling,
- * particularly around WinFsp detection and the "Open in Browser" button behavior.
+ * particularly around ProjFS detection and the "Open in Browser" button behavior.
  */
 
 describe('Virtual Drive UI Logic', () => {
   
-  describe('WinFsp Status Handling', () => {
+  describe('ProjFS Status Handling', () => {
     
-    test('should correctly parse Windows platform with WinFsp available', async () => {
+    test('should correctly parse Windows platform with ProjFS available', async () => {
       const status = {
         platform: 'windows',
         is_available: true,
         uses_memory_mode: false,
-        winfsp_path: 'C:\\Program Files\\WinFsp\\bin\\winfsp-x64.dll',
-        message: 'WinFsp is installed and available',
+        projfs_path: 'C:\\Windows\\System32\\projectedfslib.dll',
+        message: 'ProjFS is installed and available',
       };
       
       expect(status.platform).toBe('windows');
       expect(status.is_available).toBe(true);
       expect(status.uses_memory_mode).toBe(false);
-      expect(status.winfsp_path).toContain('winfsp');
+      expect(status.projfs_path).toContain('projectedfslib');
     });
     
-    test('should correctly parse Windows platform without WinFsp', async () => {
+    test('should correctly parse Windows platform without ProjFS', async () => {
       const status = {
         platform: 'windows',
         is_available: false,
         uses_memory_mode: true,
-        winfsp_path: null,
-        message: 'WinFsp not found',
+        projfs_path: null,
+        message: 'ProjFS not found',
       };
       
       expect(status.platform).toBe('windows');
       expect(status.is_available).toBe(false);
       expect(status.uses_memory_mode).toBe(true);
-      expect(status.winfsp_path).toBeNull();
+      expect(status.projfs_path).toBeNull();
     });
     
     test('should correctly parse Linux platform', async () => {
@@ -44,8 +44,8 @@ describe('Virtual Drive UI Logic', () => {
         platform: 'linux',
         is_available: false,
         uses_memory_mode: false,
-        winfsp_path: null,
-        message: 'Native filesystem support (tmpfs) - no WinFsp needed',
+        projfs_path: null,
+        message: 'Native filesystem support (tmpfs) - no ProjFS needed',
       };
       
       expect(status.platform).toBe('linux');
@@ -55,7 +55,7 @@ describe('Virtual Drive UI Logic', () => {
   
   describe('Unlocked Drive Info', () => {
     
-    test('should include uses_native_fs field for WinFsp-mounted drives', () => {
+    test('should include uses_native_fs field for ProjFS-mounted drives', () => {
       const driveInfo = {
         drive_id: 'test-drive-123',
         name: 'Test Drive',
@@ -139,12 +139,12 @@ describe('Virtual Drive UI Logic', () => {
     });
     
     test('should NOT hide the button globally based on platform', () => {
-      // This was the original bug - the button was hidden on Windows without WinFsp
+      // This was the original bug - the button was hidden on Windows without ProjFS
       // The fix is to never hide it, but change its behavior per-drive
       
       const platformStatus = {
         platform: 'windows',
-        is_available: false, // WinFsp not available
+        is_available: false, // ProjFS not available
         uses_memory_mode: true,
       };
       
@@ -280,7 +280,7 @@ describe('Regression Tests', () => {
   
   /**
    * This test documents the original bug:
-   * The "Open in Browser" button was HIDDEN globally on Windows without WinFsp,
+   * The "Open in Browser" button was HIDDEN globally on Windows without ProjFS,
    * instead of being shown with per-drive behavior.
    * 
    * The fix is to:
@@ -288,15 +288,15 @@ describe('Regression Tests', () => {
    * 2. Check uses_native_fs per-drive after mounting
    * 3. Change button text/behavior based on per-drive status
    */
-  test('BUG FIX: button should NOT be hidden globally based on WinFsp detection', () => {
+  test('BUG FIX: button should NOT be hidden globally based on ProjFS detection', () => {
     // Old buggy behavior:
-    // if (state.isMemoryMode && !winfspAvailable) {
+    // if (state.isMemoryMode && !projfsAvailable) {
     //   openDriveBtn.style.display = "none";  // <-- BUG: hides button globally
     // }
     
     const platformStatus = {
       platform: 'windows',
-      is_available: false,  // WinFsp not installed
+      is_available: false,  // ProjFS not installed
       uses_memory_mode: true,
     };
     
@@ -313,13 +313,13 @@ describe('Regression Tests', () => {
   test('BUG FIX: button behavior should be determined per-drive, not globally', () => {
     // Simulate multiple drives with different mount types
     const drives = new Map([
-      ['drive-winfsp', { mount_path: 'P:\\', uses_native_fs: true }],
+      ['drive-projfs', { mount_path: 'C:\\temp\\parcela-vdrive', uses_native_fs: true }],
       ['drive-memory', { mount_path: 'C:\\temp\\vdrive', uses_native_fs: false }],
     ]);
     
-    // For WinFsp drive: should open in explorer
-    const winfspDrive = drives.get('drive-winfsp');
-    expect(winfspDrive.uses_native_fs).toBe(true);
+    // For ProjFS drive: should open in explorer
+    const projfsDrive = drives.get('drive-projfs');
+    expect(projfsDrive.uses_native_fs).toBe(true);
     
     // For memory drive: should use file browser
     const memoryDrive = drives.get('drive-memory');
@@ -346,35 +346,35 @@ describe('Regression Tests', () => {
 
 describe('Platform Detection Edge Cases', () => {
   
-  test('should handle missing winfsp_path gracefully', () => {
+  test('should handle missing projfs_path gracefully', () => {
     const status = {
       platform: 'windows',
       is_available: false,
       uses_memory_mode: true,
-      winfsp_path: null,
-      message: 'WinFsp not found',
+      projfs_path: null,
+      message: 'ProjFS not found',
     };
     
     // Should not throw when accessing null path
     expect(() => {
-      const path = status.winfsp_path;
+      const path = status.projfs_path;
       if (path) {
         console.log('Found at:', path);
       }
     }).not.toThrow();
   });
   
-  test('should handle empty string winfsp_path', () => {
+  test('should handle empty string projfs_path', () => {
     const status = {
       platform: 'windows',
       is_available: false,
       uses_memory_mode: true,
-      winfsp_path: '',
-      message: 'WinFsp not found',
+      projfs_path: '',
+      message: 'ProjFS not found',
     };
     
     // Empty string should be treated as not found
-    const isFound = status.winfsp_path && status.winfsp_path.length > 0;
+    const isFound = status.projfs_path && status.projfs_path.length > 0;
     expect(isFound).toBeFalsy();
   });
 });

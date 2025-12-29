@@ -1018,7 +1018,7 @@ async function handleOpenDrive() {
   const driveInfo = state.unlockedDrives.get(drive.id);
   
   // Check if this specific drive is using native filesystem
-  // (WinFsp on Windows, tmpfs on Linux/macOS)
+  // (ProjFS on Windows, tmpfs on Linux/macOS)
   if (driveInfo && !driveInfo.uses_native_fs) {
     // Memory-only mode - scroll to the in-app file browser
     if (fileBrowserEl && !fileBrowserEl.classList.contains("hidden")) {
@@ -1485,15 +1485,15 @@ fbDeleteBtn.addEventListener("click", handleFBDelete);
 // The actual native FS availability is checked per-drive after mounting
 (async function initPlatformSettings() {
   try {
-    const status = await invoke("get_winfsp_status");
+    const status = await invoke("get_projfs_status");
     console.log("[Parcela] Platform status:", status);
-    
+
     if (status.platform === "windows") {
       if (status.is_available) {
-        console.log("[Parcela] WinFsp DLL found at:", status.winfsp_path);
+        console.log("[Parcela] ProjFS DLL found at:", status.projfs_path);
         console.log("[Parcela] Will attempt native drive mount when unlocking");
       } else {
-        console.warn("[Parcela] WinFsp DLL not found:", status.message);
+        console.warn("[Parcela] ProjFS not enabled:", status.message);
         console.log("[Parcela] Will use in-app file browser for virtual drives");
       }
     } else {
