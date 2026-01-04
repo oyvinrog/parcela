@@ -996,3 +996,142 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// Smoke test for file relocation - this would have caught the Windows sync_all bug.
+    /// The bug was: File::open() is read-only, but sync_all() calls FlushFileBuffers
+    /// which requires write access on Windows.
+    #[test]
+    fn test_move_file_basic() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let source_path = temp_dir.path().join("source.txt");
+        let dest_path = temp_dir.path().join("dest.txt");
+
+        // Create source file with some content
+        let content = b"test content for move operation";
+        fs::write(&source_path, content).expect("Failed to write source file");
+
+        // Move the file
+        let result = move_file(
+            source_path.to_string_lossy().to_string(),
+            dest_path.to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_ok(), "move_file failed: {:?}", result.err());
+
+        // Verify source is gone
+        assert!(!source_path.exists(), "Source file should be deleted after move");
+
+        // Verify destination exists with correct content
+        assert!(dest_path.exists(), "Destination file should exist");
+        let dest_content = fs::read(&dest_path).expect("Failed to read dest file");
+        assert_eq!(dest_content, content, "Content should match");
+    }
+
+    /// Test moving to a different directory
+    #[test]
+    fn test_move_file_across_directories() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let subdir = temp_dir.path().join("subdir");
+        fs::create_dir(&subdir).expect("Failed to create subdir");
+
+        let source_path = temp_dir.path().join("source.txt");
+        let dest_path = subdir.join("moved.txt");
+
+        let content = b"cross-directory move test";
+        fs::write(&source_path, content).expect("Failed to write source file");
+
+        let result = move_file(
+            source_path.to_string_lossy().to_string(),
+            dest_path.to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_ok(), "move_file across dirs failed: {:?}", result.err());
+        assert!(!source_path.exists());
+        assert_eq!(fs::read(&dest_path).unwrap(), content);
+    }
+
+    /// Test that moving same file to itself is a no-op
+    #[test]
+    fn test_move_file_same_path() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let file_path = temp_dir.path().join("file.txt");
+
+        let content = b"same path test";
+        fs::write(&file_path, content).expect("Failed to write file");
+
+        let result = move_file(
+            file_path.to_string_lossy().to_string(),
+            file_path.to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_ok());
+        assert!(file_path.exists());
+        assert_eq!(fs::read(&file_path).unwrap(), content);
+    }
+
+    /// Test moving over existing file
+    #[test]
+    fn test_move_file_overwrite_existing() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let source_path = temp_dir.path().join("source.txt");
+        let dest_path = temp_dir.path().join("dest.txt");
+
+        let source_content = b"source content";
+        let dest_content = b"old dest content";
+
+        fs::write(&source_path, source_content).expect("Failed to write source");
+        fs::write(&dest_path, dest_content).expect("Failed to write dest");
+
+        let result = move_file(
+            source_path.to_string_lossy().to_string(),
+            dest_path.to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_ok(), "Overwrite move failed: {:?}", result.err());
+        assert!(!source_path.exists());
+        assert_eq!(fs::read(&dest_path).unwrap(), source_content);
+    }
+
+    /// Test error handling for missing source
+    #[test]
+    fn test_move_file_missing_source() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let source_path = temp_dir.path().join("nonexistent.txt");
+        let dest_path = temp_dir.path().join("dest.txt");
+
+        let result = move_file(
+            source_path.to_string_lossy().to_string(),
+            dest_path.to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Source file not found"));
+    }
+
+    /// Test with larger file (tests the copy + verify logic)
+    #[test]
+    fn test_move_file_larger_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let source_path = temp_dir.path().join("large.bin");
+        let dest_path = temp_dir.path().join("large_moved.bin");
+
+        // Create a 1MB file
+        let content: Vec<u8> = (0..1_000_000).map(|i| (i % 256) as u8).collect();
+        fs::write(&source_path, &content).expect("Failed to write large file");
+
+        let result = move_file(
+            source_path.to_string_lossy().to_string(),
+            dest_path.to_string_lossy().to_string(),
+        );
+
+        assert!(result.is_ok(), "Large file move failed: {:?}", result.err());
+        assert!(!source_path.exists());
+        assert_eq!(fs::read(&dest_path).unwrap(), content);
+    }
+}
