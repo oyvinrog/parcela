@@ -63,47 +63,100 @@ fn pick_input_file() -> Option<String> {
 }
 
 #[tauri::command]
-fn pick_destination_folder(title: String) -> Option<String> {
-    FileDialog::new()
-        .set_title(&title)
-        .pick_folder()
+fn pick_destination_path(
+    title: String,
+    suggested_name: String,
+    start_dir: Option<String>,
+) -> Option<String> {
+    let mut dialog = FileDialog::new();
+    dialog = dialog.set_title(&title).set_file_name(&suggested_name);
+    if let Some(dir) = start_dir {
+        dialog = dialog.set_directory(dir);
+    }
+    dialog
+        .save_file()
         .map(|path| path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-fn move_file(source: String, dest_folder: String) -> Result<String, String> {
+fn move_file(source: String, dest_path: String) -> Result<String, String> {
     let source_path = std::path::Path::new(&source);
     if !source_path.exists() {
         return Err(format!("Source file not found: {}", source));
     }
     
-    let filename = source_path.file_name()
-        .ok_or("Invalid source path")?;
-    
-    let dest_path = std::path::Path::new(&dest_folder).join(filename);
-    
-    // Try rename first (fast path for same filesystem)
-    match std::fs::rename(source_path, &dest_path) {
-        Ok(()) => Ok(dest_path.to_string_lossy().to_string()),
-        Err(e) => {
-            // Check for cross-device link error and fall back to copy-then-delete
-            // - Unix/Linux: EXDEV = 18
-            // - Windows: ERROR_NOT_SAME_DEVICE = 17
-            let is_cross_device = e.kind() == std::io::ErrorKind::CrossesDevices
-                || (cfg!(unix) && e.raw_os_error() == Some(18))
-                || (cfg!(windows) && e.raw_os_error() == Some(17));
-            
-            if is_cross_device {
-                std::fs::copy(source_path, &dest_path)
-                    .map_err(|e| format!("Failed to copy file: {}", e))?;
-                std::fs::remove_file(source_path)
-                    .map_err(|e| format!("Failed to remove original file after copy: {}", e))?;
-                Ok(dest_path.to_string_lossy().to_string())
-            } else {
-                Err(format!("Failed to move file: {}", e))
-            }
+    let dest_path = std::path::PathBuf::from(&dest_path);
+    let dest_dir = dest_path
+        .parent()
+        .ok_or("Invalid destination path")?;
+    if !dest_dir.exists() {
+        return Err(format!(
+            "Destination folder does not exist: {}",
+            dest_dir.display()
+        ));
+    }
+    if dest_path == source_path {
+        return Ok(dest_path.to_string_lossy().to_string());
+    }
+
+    if dest_path.exists() {
+        std::fs::remove_file(&dest_path)
+            .map_err(|e| format!("Failed to remove existing destination file: {}", e))?;
+    }
+
+    let source_len = std::fs::metadata(source_path)
+        .map_err(|e| format!("Failed to read source metadata: {}", e))?
+        .len();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "Failed to read system time".to_string())?
+        .as_nanos();
+    let filename = dest_path
+        .file_name()
+        .ok_or("Invalid destination filename")?;
+    let temp_filename = format!(
+        "{}.parcela-relocate-{}-{}",
+        filename.to_string_lossy(),
+        std::process::id(),
+        nonce
+    );
+    let temp_path = dest_dir.join(temp_filename);
+
+    std::fs::copy(source_path, &temp_path)
+        .map_err(|e| format!("Failed to copy file: {}", e))?;
+    let temp_len = std::fs::metadata(&temp_path)
+        .map_err(|e| format!("Failed to read temp metadata: {}", e))?
+        .len();
+    if temp_len != source_len {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err("Copied file size does not match source".to_string());
+    }
+
+    std::fs::File::open(&temp_path)
+        .and_then(|file| file.sync_all())
+        .map_err(|e| format!("Failed to sync copied file: {}", e))?;
+
+    std::fs::rename(&temp_path, &dest_path)
+        .map_err(|e| format!("Failed to finalize destination file: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        if let Ok(dir) = std::fs::File::open(dest_dir) {
+            let _ = dir.sync_all();
         }
     }
+
+    let dest_len = std::fs::metadata(&dest_path)
+        .map_err(|e| format!("Failed to read destination metadata: {}", e))?
+        .len();
+    if dest_len != source_len {
+        return Err("Destination file size does not match source".to_string());
+    }
+
+    std::fs::remove_file(source_path)
+        .map_err(|e| format!("Failed to remove original file after copy: {}", e))?;
+
+    Ok(dest_path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
@@ -227,7 +280,11 @@ fn check_paths(paths: Vec<String>) -> Vec<bool> {
             if path.trim().is_empty() {
                 false
             } else {
-                std::path::Path::new(&path).exists()
+                let path_obj = std::path::Path::new(&path);
+                match std::fs::metadata(path_obj) {
+                    Ok(meta) => meta.is_file() && meta.len() > 0,
+                    Err(_) => false,
+                }
             }
         })
         .collect()
@@ -346,20 +403,44 @@ async fn unlock_virtual_drive(
         let mut shares = Vec::with_capacity(share_paths.len());
         for path in &share_paths {
             let data = std::fs::read(path).map_err(|e| e.to_string())?;
+            if data.len() < 15 {
+                continue;
+            }
             let share = parcela::decode_share(&data).map_err(|e| e.to_string())?;
             shares.push(share);
         }
 
-        // Combine shares and decrypt
-        let encrypted = parcela::combine_shares(&shares).map_err(|e| e.to_string())?;
-        let decrypted = parcela::decrypt(&encrypted, &password).map_err(|e| e.to_string())?;
+        if shares.len() < 2 {
+            return Err("need at least two valid shares".to_string());
+        }
 
-        // Decode the virtual drive
-        let drive = parcela::VirtualDrive::decode(&decrypted).map_err(|e| e.to_string())?;
-        let drive_id = drive.metadata.id.clone();
-        let drive_name = drive.metadata.name.clone();
+        let mut last_err: Option<String> = None;
+        for i in 0..shares.len() {
+            for j in (i + 1)..shares.len() {
+                let candidate = vec![shares[i].clone(), shares[j].clone()];
+                let attempt = parcela::combine_shares(&candidate)
+                    .map_err(|e| e.to_string())
+                    .and_then(|encrypted| {
+                        parcela::decrypt(&encrypted, &password).map_err(|e| e.to_string())
+                    })
+                    .and_then(|decrypted| {
+                        parcela::VirtualDrive::decode(&decrypted).map_err(|e| e.to_string())
+                    });
 
-        Ok::<_, String>((drive, drive_id, drive_name))
+                match attempt {
+                    Ok(drive) => {
+                        let drive_id = drive.metadata.id.clone();
+                        let drive_name = drive.metadata.name.clone();
+                        return Ok((drive, drive_id, drive_name));
+                    }
+                    Err(e) => last_err = Some(e),
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| {
+            "failed to unlock with provided shares".to_string()
+        }))
     })
     .await
     .map_err(|e| e.to_string())??;
@@ -449,8 +530,17 @@ async fn lock_virtual_drive(
                 let idx = (share.index - 1) as usize;
                 if let Some(path) = &share_paths[idx] {
                     let data = parcela::encode_share(share);
-                    if let Err(e) = std::fs::write(path, data) {
+                    if let Err(e) = std::fs::write(path, &data) {
                         return Err((state, e.to_string()));
+                    }
+                    if let Ok(file) = std::fs::File::open(path) {
+                        let _ = file.sync_all();
+                    }
+                    #[cfg(unix)]
+                    if let Some(dir) = std::path::Path::new(path).parent() {
+                        if let Ok(dir_file) = std::fs::File::open(dir) {
+                            let _ = dir_file.sync_all();
+                        }
                     }
                 }
             }
@@ -792,7 +882,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             pick_input_file,
-            pick_destination_folder,
+            pick_destination_path,
             move_file,
             pick_output_dir,
             pick_share_files,

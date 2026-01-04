@@ -808,19 +808,46 @@ async function handleRelocateShare(index, isDrive = false) {
   }
 
   const shareFilename = getFileName(currentPath);
-  const title = `Move "${shareFilename}" to folder`;
+  const title = `Relocate "${shareFilename}"`;
 
-  const destFolder = await invoke("pick_destination_folder", { title });
-  if (!destFolder) return;
+  let startDir = getDirName(currentPath);
+  if (!startDir) {
+    startDir = window.__TAURI__?.os?.platform?.() === "linux" ? "/media" : "";
+  }
+  const destPath = await invoke("pick_destination_path", {
+    title,
+    suggestedName: shareFilename,
+    startDir: startDir || null,
+  });
+  if (!destPath) return;
 
   try {
-    const newPath = await invoke("move_file", { source: currentPath, destFolder });
+    setStatus(`Relocating to ${destPath}...`);
+    let newPath = await invoke("move_file", { source: currentPath, destPath });
+    let [newExists, oldExists] = await invoke("check_paths", {
+      paths: [newPath, currentPath],
+    });
+
+    if (!newExists && oldExists) {
+      newPath = await invoke("move_file", { source: currentPath, destPath });
+      [newExists] = await invoke("check_paths", { paths: [newPath] });
+    } else if (!newExists && !oldExists) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      [newExists] = await invoke("check_paths", { paths: [newPath] });
+    }
+
     entry.shares[index] = newPath;
+    renderFileList();
+    renderDetail();
     await refreshAvailability(entry);
+    if (!entry.available[index] && newExists) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await refreshAvailability(entry);
+    }
     await saveVault();
     renderFileList();
     renderDetail();
-    setStatus("Share moved successfully.", "success");
+    setStatus(`Share moved to ${newPath}.`, "success");
   } catch (err) {
     setStatus(`Failed to move: ${err}`, "error");
   }
@@ -931,10 +958,24 @@ async function handleUnlockDrive() {
     showLoading("Unlocking drive…");
     await waitForPaint();
     const unlockInfo = await invoke("unlock_virtual_drive", {
-      sharePaths: availablePaths.slice(0, 2),
+      sharePaths: availablePaths,
       password: state.vaultPassword,
     });
     hideLoading();
+
+    if (drive.id !== unlockInfo.drive_id) {
+      const matchingDrive = (state.vault.virtual_drives || []).find(
+        (d) => d.id === unlockInfo.drive_id
+      );
+      if (matchingDrive && matchingDrive !== drive) {
+        state.selectedFileId = matchingDrive.id;
+        state.selectedType = "drive";
+      } else {
+        drive.id = unlockInfo.drive_id;
+        state.selectedFileId = unlockInfo.drive_id;
+      }
+      await saveVault();
+    }
 
     state.unlockedDrives.set(unlockInfo.drive_id, {
       mount_path: unlockInfo.mount_path,
