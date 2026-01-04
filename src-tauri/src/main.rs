@@ -132,9 +132,36 @@ fn move_file(source: String, dest_path: String) -> Result<String, String> {
         return Err("Copied file size does not match source".to_string());
     }
 
-    std::fs::File::open(&temp_path)
-        .and_then(|file| file.sync_all())
-        .map_err(|e| format!("Failed to sync copied file: {}", e))?;
+    // Sync the copied file to ensure durability before rename.
+    // On Windows, retry if the file is temporarily locked (antivirus, indexer, etc.)
+    #[cfg(windows)]
+    {
+        let mut last_err = None;
+        for attempt in 0..5 {
+            match std::fs::File::open(&temp_path).and_then(|file| file.sync_all()) {
+                Ok(()) => {
+                    last_err = None;
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt < 4 {
+                        std::thread::sleep(std::time::Duration::from_millis(100 * (attempt + 1) as u64));
+                    }
+                }
+            }
+        }
+        if let Some(e) = last_err {
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(format!("Failed to sync copied file: {} (file may be locked by antivirus or indexer)", e));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::File::open(&temp_path)
+            .and_then(|file| file.sync_all())
+            .map_err(|e| format!("Failed to sync copied file: {}", e))?;
+    }
 
     std::fs::rename(&temp_path, &dest_path)
         .map_err(|e| format!("Failed to finalize destination file: {}", e))?;
