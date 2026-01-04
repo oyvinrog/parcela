@@ -3,6 +3,7 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use argon2::{Argon2, Algorithm, Version, Params};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub mod virtual_drive;
 
@@ -39,6 +40,11 @@ const ARGON2_P_COST: u32 = 4;         // 4 parallel lanes
 pub const SHARE_TOTAL: u8 = 3;
 pub const SHARE_THRESHOLD: u8 = 2;
 
+/// Secure key wrapper that zeros memory on drop.
+/// This ensures encryption keys don't persist in memory after use.
+#[derive(Zeroize, ZeroizeOnDrop)]
+struct SecureKey([u8; 32]);
+
 #[derive(Debug)]
 pub enum ParcelaError {
     InvalidFormat(&'static str),
@@ -64,28 +70,30 @@ pub struct Share {
     pub payload: Vec<u8>,
 }
 
-/// Legacy key derivation using SHA-256 (for reading PARCELA1 files only)
-fn derive_key_legacy(password: &str) -> [u8; 32] {
+/// Legacy key derivation using SHA-256 (for reading PARCELA1 files only).
+/// Returns a SecureKey that will be zeroed on drop.
+fn derive_key_legacy(password: &str) -> SecureKey {
     let mut hasher = Sha256::new();
     hasher.update(password.as_bytes());
     let result = hasher.finalize();
     let mut key = [0u8; 32];
     key.copy_from_slice(&result);
-    key
+    SecureKey(key)
 }
 
 /// Derive encryption key using Argon2id with high-security parameters.
 /// This function is intentionally slow (10-20 seconds) to protect against brute-force attacks.
-pub fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32], ParcelaError> {
+/// Returns a SecureKey that will be zeroed on drop.
+pub fn derive_key(password: &str, salt: &[u8]) -> Result<SecureKey, ParcelaError> {
     let params = Params::new(ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, Some(32))
         .map_err(|_| ParcelaError::CryptoFailure)?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    
+
     let mut key = [0u8; 32];
     argon2
         .hash_password_into(password.as_bytes(), salt, &mut key)
         .map_err(|_| ParcelaError::CryptoFailure)?;
-    Ok(key)
+    Ok(SecureKey(key))
 }
 
 pub fn encrypt_with_rng(
@@ -96,9 +104,10 @@ pub fn encrypt_with_rng(
     // Generate random salt for Argon2id
     let mut salt = [0u8; SALT_SIZE];
     rng.fill_bytes(&mut salt);
-    
+
+    // Key is automatically zeroed when dropped
     let key = derive_key(password, &salt)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| ParcelaError::CryptoFailure)?;
+    let cipher = Aes256Gcm::new_from_slice(&key.0).map_err(|_| ParcelaError::CryptoFailure)?;
     let mut nonce_bytes = [0u8; 12];
     rng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -113,6 +122,7 @@ pub fn encrypt_with_rng(
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
     Ok(out)
+    // key is zeroed here when it goes out of scope
 }
 
 pub fn encrypt(plaintext: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError> {
@@ -124,9 +134,9 @@ pub fn decrypt(blob: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError> {
     if blob.len() < 8 {
         return Err(ParcelaError::InvalidFormat("blob too small"));
     }
-    
+
     let magic = &blob[..8];
-    
+
     // Handle legacy PARCELA1 format (SHA-256 key derivation)
     if magic == MAGIC_BLOB_V1 {
         if blob.len() < 8 + 12 {
@@ -136,14 +146,16 @@ pub fn decrypt(blob: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError> {
         let nonce_end = nonce_start + 12;
         let nonce = Nonce::from_slice(&blob[nonce_start..nonce_end]);
         let ciphertext = &blob[nonce_end..];
-        
+
+        // Key is automatically zeroed when dropped
         let key = derive_key_legacy(password);
-        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| ParcelaError::CryptoFailure)?;
+        let cipher = Aes256Gcm::new_from_slice(&key.0).map_err(|_| ParcelaError::CryptoFailure)?;
         return cipher
             .decrypt(nonce, ciphertext)
             .map_err(|_| ParcelaError::CryptoFailure);
+        // key is zeroed here
     }
-    
+
     // Handle current PARCELA2 format (Argon2id key derivation)
     if magic == MAGIC_BLOB {
         // Format: MAGIC (8) + SALT (32) + NONCE (12) + CIPHERTEXT
@@ -153,19 +165,21 @@ pub fn decrypt(blob: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError> {
         let salt_start = 8;
         let salt_end = salt_start + SALT_SIZE;
         let salt = &blob[salt_start..salt_end];
-        
+
         let nonce_start = salt_end;
         let nonce_end = nonce_start + 12;
         let nonce = Nonce::from_slice(&blob[nonce_start..nonce_end]);
         let ciphertext = &blob[nonce_end..];
-        
+
+        // Key is automatically zeroed when dropped
         let key = derive_key(password, salt)?;
-        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| ParcelaError::CryptoFailure)?;
+        let cipher = Aes256Gcm::new_from_slice(&key.0).map_err(|_| ParcelaError::CryptoFailure)?;
         return cipher
             .decrypt(nonce, ciphertext)
             .map_err(|_| ParcelaError::CryptoFailure);
+        // key is zeroed here
     }
-    
+
     Err(ParcelaError::InvalidFormat("bad magic"))
 }
 
