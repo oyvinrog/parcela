@@ -19,6 +19,10 @@ const state = {
   },
 };
 
+const AUTO_REFRESH_MS = 6000;
+let autoRefreshTimer = null;
+let autoRefreshInFlight = false;
+
 const shareIndexRegex = /^(.*)\.share([1-3])$/;
 
 const statusEl = document.getElementById("status-msg");
@@ -119,11 +123,13 @@ function showVaultScreen() {
   vaultNameEl.textContent = state.vaultPath
     ? getFileName(state.vaultPath)
     : "Vault";
+  startAutoRefresh();
 }
 
 function showLoginScreen() {
   loginScreen.classList.remove("hidden");
   vaultScreen.classList.add("hidden");
+  stopAutoRefresh();
 }
 
 function getFileName(path) {
@@ -264,6 +270,31 @@ async function refreshAllAvailability() {
   for (const drive of state.vault.virtual_drives || []) {
     await refreshAvailability(drive);
   }
+}
+
+async function autoRefreshStatus() {
+  if (!state.vaultPath || autoRefreshInFlight) return;
+  autoRefreshInFlight = true;
+  try {
+    await refreshAllAvailability();
+    renderFileList();
+    renderDetail();
+  } catch (err) {
+    console.warn("[Parcela] Auto-refresh failed:", err);
+  } finally {
+    autoRefreshInFlight = false;
+  }
+}
+
+function startAutoRefresh() {
+  if (autoRefreshTimer) return;
+  autoRefreshTimer = setInterval(autoRefreshStatus, AUTO_REFRESH_MS);
+}
+
+function stopAutoRefresh() {
+  if (!autoRefreshTimer) return;
+  clearInterval(autoRefreshTimer);
+  autoRefreshTimer = null;
 }
 
 async function refreshUnlockedDrives() {
@@ -845,6 +876,7 @@ async function handleRelocateShare(index, isDrive = false) {
       await refreshAvailability(entry);
     }
     await saveVault();
+    await autoRefreshStatus();
     renderFileList();
     renderDetail();
     setStatus(`Share moved to ${newPath}.`, "success");
