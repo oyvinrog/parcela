@@ -59,6 +59,12 @@ body::before {
   margin-bottom: 32px;
 }
 
+.topbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .brand .logo {
   font-size: 28px;
   font-weight: 700;
@@ -90,6 +96,17 @@ body::before {
 .status.error {
   color: #8b3244;
   border-color: rgba(232, 93, 117, 0.5);
+}
+
+.app-version {
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
 }
 
 .login-screen {

@@ -22,6 +22,7 @@ const state = {
 const shareIndexRegex = /^(.*)\.share([1-3])$/;
 
 const statusEl = document.getElementById("status-msg");
+const appVersionEl = document.getElementById("app-version");
 const loginScreen = document.getElementById("login-screen");
 const vaultScreen = document.getElementById("vault-screen");
 
@@ -92,6 +93,23 @@ function setStatus(message, kind = "") {
   statusEl.textContent = message;
   statusEl.className = "status";
   if (kind) statusEl.classList.add(kind);
+}
+
+async function loadAppVersion() {
+  if (!appVersionEl) return;
+  const getVersion = window.__TAURI__?.app?.getVersion;
+  if (!getVersion) {
+    appVersionEl.classList.add("hidden");
+    return;
+  }
+
+  try {
+    const version = await getVersion();
+    appVersionEl.textContent = `v${version}`;
+  } catch (err) {
+    console.warn("[Parcela] Failed to load app version:", err);
+    appVersionEl.classList.add("hidden");
+  }
 }
 
 function showVaultScreen() {
@@ -1550,3 +1568,4 @@ document.getElementById("open-vault").addEventListener("click", handleOpenVault)
 showLoginScreen();
 renderFileList();
 renderDetail();
+loadAppVersion();
