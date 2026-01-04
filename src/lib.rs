@@ -3,6 +3,7 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use argon2::{Argon2, Algorithm, Version, Params};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub mod virtual_drive;
 
@@ -24,7 +25,10 @@ pub use projfs_fs::is_projfs_available;
 pub const MAGIC_BLOB_V1: &[u8; 8] = b"PARCELA1";
 /// Current format magic (Argon2id key derivation)
 pub const MAGIC_BLOB: &[u8; 8] = b"PARCELA2";
+/// Legacy share format (no checksum)
 pub const MAGIC_SHARE: &[u8; 8] = b"PSHARE01";
+/// Current share format with SHA-256 checksum for integrity verification
+pub const MAGIC_SHARE_V2: &[u8; 8] = b"PSHARE02";
 
 /// Salt size for Argon2id
 pub const SALT_SIZE: usize = 32;
@@ -38,6 +42,11 @@ const ARGON2_T_COST: u32 = 3;         // 3 iterations
 const ARGON2_P_COST: u32 = 4;         // 4 parallel lanes
 pub const SHARE_TOTAL: u8 = 3;
 pub const SHARE_THRESHOLD: u8 = 2;
+
+/// Secure key wrapper that zeros memory on drop.
+/// This ensures encryption keys don't persist in memory after use.
+#[derive(Zeroize, ZeroizeOnDrop)]
+struct SecureKey([u8; 32]);
 
 #[derive(Debug)]
 pub enum ParcelaError {
@@ -64,28 +73,30 @@ pub struct Share {
     pub payload: Vec<u8>,
 }
 
-/// Legacy key derivation using SHA-256 (for reading PARCELA1 files only)
-fn derive_key_legacy(password: &str) -> [u8; 32] {
+/// Legacy key derivation using SHA-256 (for reading PARCELA1 files only).
+/// Returns a SecureKey that will be zeroed on drop.
+fn derive_key_legacy(password: &str) -> SecureKey {
     let mut hasher = Sha256::new();
     hasher.update(password.as_bytes());
     let result = hasher.finalize();
     let mut key = [0u8; 32];
     key.copy_from_slice(&result);
-    key
+    SecureKey(key)
 }
 
 /// Derive encryption key using Argon2id with high-security parameters.
 /// This function is intentionally slow (10-20 seconds) to protect against brute-force attacks.
-pub fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; 32], ParcelaError> {
+/// Returns a SecureKey that will be zeroed on drop.
+pub(crate) fn derive_key(password: &str, salt: &[u8]) -> Result<SecureKey, ParcelaError> {
     let params = Params::new(ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, Some(32))
         .map_err(|_| ParcelaError::CryptoFailure)?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    
+
     let mut key = [0u8; 32];
     argon2
         .hash_password_into(password.as_bytes(), salt, &mut key)
         .map_err(|_| ParcelaError::CryptoFailure)?;
-    Ok(key)
+    Ok(SecureKey(key))
 }
 
 pub fn encrypt_with_rng(
@@ -96,9 +107,10 @@ pub fn encrypt_with_rng(
     // Generate random salt for Argon2id
     let mut salt = [0u8; SALT_SIZE];
     rng.fill_bytes(&mut salt);
-    
+
+    // Key is automatically zeroed when dropped
     let key = derive_key(password, &salt)?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| ParcelaError::CryptoFailure)?;
+    let cipher = Aes256Gcm::new_from_slice(&key.0).map_err(|_| ParcelaError::CryptoFailure)?;
     let mut nonce_bytes = [0u8; 12];
     rng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -113,6 +125,7 @@ pub fn encrypt_with_rng(
     out.extend_from_slice(&nonce_bytes);
     out.extend_from_slice(&ciphertext);
     Ok(out)
+    // key is zeroed here when it goes out of scope
 }
 
 pub fn encrypt(plaintext: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError> {
@@ -124,11 +137,21 @@ pub fn decrypt(blob: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError> {
     if blob.len() < 8 {
         return Err(ParcelaError::InvalidFormat("blob too small"));
     }
-    
+
     let magic = &blob[..8];
-    
+
     // Handle legacy PARCELA1 format (SHA-256 key derivation)
+    // WARNING: This format uses weak key derivation (SHA-256) which is vulnerable
+    // to GPU-accelerated brute force attacks. Consider re-encrypting with the
+    // current PARCELA2 format using Argon2id.
     if magic == MAGIC_BLOB_V1 {
+        // Emit deprecation warning to stderr
+        eprintln!(
+            "WARNING: Decrypting legacy PARCELA1 format file. \
+             This format uses weak SHA-256 key derivation. \
+             Consider re-encrypting with the current format for better security."
+        );
+
         if blob.len() < 8 + 12 {
             return Err(ParcelaError::InvalidFormat("blob too small"));
         }
@@ -136,14 +159,16 @@ pub fn decrypt(blob: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError> {
         let nonce_end = nonce_start + 12;
         let nonce = Nonce::from_slice(&blob[nonce_start..nonce_end]);
         let ciphertext = &blob[nonce_end..];
-        
+
+        // Key is automatically zeroed when dropped
         let key = derive_key_legacy(password);
-        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| ParcelaError::CryptoFailure)?;
+        let cipher = Aes256Gcm::new_from_slice(&key.0).map_err(|_| ParcelaError::CryptoFailure)?;
         return cipher
             .decrypt(nonce, ciphertext)
             .map_err(|_| ParcelaError::CryptoFailure);
+        // key is zeroed here
     }
-    
+
     // Handle current PARCELA2 format (Argon2id key derivation)
     if magic == MAGIC_BLOB {
         // Format: MAGIC (8) + SALT (32) + NONCE (12) + CIPHERTEXT
@@ -153,19 +178,21 @@ pub fn decrypt(blob: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError> {
         let salt_start = 8;
         let salt_end = salt_start + SALT_SIZE;
         let salt = &blob[salt_start..salt_end];
-        
+
         let nonce_start = salt_end;
         let nonce_end = nonce_start + 12;
         let nonce = Nonce::from_slice(&blob[nonce_start..nonce_end]);
         let ciphertext = &blob[nonce_end..];
-        
+
+        // Key is automatically zeroed when dropped
         let key = derive_key(password, salt)?;
-        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| ParcelaError::CryptoFailure)?;
+        let cipher = Aes256Gcm::new_from_slice(&key.0).map_err(|_| ParcelaError::CryptoFailure)?;
         return cipher
             .decrypt(nonce, ciphertext)
             .map_err(|_| ParcelaError::CryptoFailure);
+        // key is zeroed here
     }
-    
+
     Err(ParcelaError::InvalidFormat("bad magic"))
 }
 
@@ -241,37 +268,92 @@ pub fn combine_shares(shares: &[Share]) -> Result<Vec<u8>, ParcelaError> {
     Ok(secret)
 }
 
+/// Encode a share with integrity checksum (PSHARE02 format).
+/// Format: MAGIC (8) + INDEX (1) + TOTAL (1) + THRESHOLD (1) + LEN (4) + PAYLOAD (N) + SHA256 (32)
 pub fn encode_share(share: &Share) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8 + 1 + 1 + 1 + 4 + share.payload.len());
-    out.extend_from_slice(MAGIC_SHARE);
+    // Calculate checksum over index + payload
+    let mut hasher = Sha256::new();
+    hasher.update([share.index]);
+    hasher.update(&share.payload);
+    let checksum = hasher.finalize();
+
+    let mut out = Vec::with_capacity(8 + 1 + 1 + 1 + 4 + share.payload.len() + 32);
+    out.extend_from_slice(MAGIC_SHARE_V2);
     out.push(share.index);
     out.push(SHARE_TOTAL);
     out.push(SHARE_THRESHOLD);
     let len = share.payload.len() as u32;
     out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(&share.payload);
+    out.extend_from_slice(&checksum);
     out
 }
 
+/// Decode a share, supporting both legacy (PSHARE01) and current (PSHARE02) formats.
 pub fn decode_share(data: &[u8]) -> Result<Share, ParcelaError> {
     if data.len() < 8 + 1 + 1 + 1 + 4 {
         return Err(ParcelaError::InvalidFormat("share too small"));
     }
-    if &data[..8] != MAGIC_SHARE {
-        return Err(ParcelaError::InvalidFormat("bad share magic"));
+
+    let magic = &data[..8];
+
+    // Handle legacy PSHARE01 format (no checksum)
+    // WARNING: This format lacks integrity verification. Consider re-splitting
+    // with the current PSHARE02 format to detect corruption.
+    if magic == MAGIC_SHARE {
+        // Emit deprecation warning to stderr
+        eprintln!(
+            "WARNING: Reading legacy PSHARE01 format share. \
+             This format lacks integrity verification. \
+             Consider re-creating shares with the current format."
+        );
+
+        let index = data[8];
+        let total = data[9];
+        let threshold = data[10];
+        if total != SHARE_TOTAL || threshold != SHARE_THRESHOLD {
+            return Err(ParcelaError::InvalidShare("unsupported scheme"));
+        }
+        let len = u32::from_be_bytes([data[11], data[12], data[13], data[14]]) as usize;
+        let payload = data
+            .get(15..15 + len)
+            .ok_or(ParcelaError::InvalidFormat("truncated share"))?
+            .to_vec();
+        return Ok(Share { index, payload });
     }
-    let index = data[8];
-    let total = data[9];
-    let threshold = data[10];
-    if total != SHARE_TOTAL || threshold != SHARE_THRESHOLD {
-        return Err(ParcelaError::InvalidShare("unsupported scheme"));
+
+    // Handle current PSHARE02 format (with SHA-256 checksum)
+    if magic == MAGIC_SHARE_V2 {
+        let index = data[8];
+        let total = data[9];
+        let threshold = data[10];
+        if total != SHARE_TOTAL || threshold != SHARE_THRESHOLD {
+            return Err(ParcelaError::InvalidShare("unsupported scheme"));
+        }
+        let len = u32::from_be_bytes([data[11], data[12], data[13], data[14]]) as usize;
+
+        // Verify we have enough data for payload + checksum
+        if data.len() < 15 + len + 32 {
+            return Err(ParcelaError::InvalidFormat("truncated share or checksum"));
+        }
+
+        let payload = data[15..15 + len].to_vec();
+        let stored_checksum = &data[15 + len..15 + len + 32];
+
+        // Verify checksum
+        let mut hasher = Sha256::new();
+        hasher.update([index]);
+        hasher.update(&payload);
+        let computed_checksum = hasher.finalize();
+
+        if computed_checksum.as_slice() != stored_checksum {
+            return Err(ParcelaError::InvalidShare("checksum mismatch - share corrupted"));
+        }
+
+        return Ok(Share { index, payload });
     }
-    let len = u32::from_be_bytes([data[11], data[12], data[13], data[14]]) as usize;
-    let payload = data
-        .get(15..15 + len)
-        .ok_or(ParcelaError::InvalidFormat("truncated share"))?
-        .to_vec();
-    Ok(Share { index, payload })
+
+    Err(ParcelaError::InvalidFormat("bad share magic"))
 }
 
 fn gf_add(a: u8, b: u8) -> u8 {
@@ -443,21 +525,48 @@ mod tests {
             index: 1,
             payload: vec![1, 2, 3, 4],
         });
+        // Truncate the checksum (last 32 bytes)
         data.truncate(data.len() - 2);
+        let err = decode_share(&data).unwrap_err();
+        // With new format, truncation affects checksum verification
+        assert!(matches!(
+            err,
+            ParcelaError::InvalidFormat("truncated share or checksum")
+        ));
+    }
+
+    #[test]
+    fn decode_share_detects_corruption() {
+        let mut data = encode_share(&Share {
+            index: 1,
+            payload: vec![1, 2, 3, 4],
+        });
+        // Corrupt the payload (flip a bit)
+        data[15] ^= 0xFF;
         let err = decode_share(&data).unwrap_err();
         assert!(matches!(
             err,
-            ParcelaError::InvalidFormat("truncated share")
+            ParcelaError::InvalidShare("checksum mismatch - share corrupted")
         ));
     }
 
     #[test]
     fn decode_share_rejects_unsupported_scheme() {
-        let mut data = encode_share(&Share {
+        // Use legacy format to test scheme validation (since new format
+        // would fail checksum first)
+        let share = Share {
             index: 1,
             payload: vec![1, 2, 3],
-        });
-        data[9] = 4;
+        };
+        let mut data = Vec::with_capacity(8 + 1 + 1 + 1 + 4 + share.payload.len());
+        data.extend_from_slice(MAGIC_SHARE); // Legacy format
+        data.push(share.index);
+        data.push(4); // Invalid total (not 3)
+        data.push(SHARE_THRESHOLD);
+        let len = share.payload.len() as u32;
+        data.extend_from_slice(&len.to_be_bytes());
+        data.extend_from_slice(&share.payload);
+
         let err = decode_share(&data).unwrap_err();
         assert!(matches!(
             err,

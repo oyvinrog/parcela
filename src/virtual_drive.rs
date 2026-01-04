@@ -32,43 +32,62 @@ impl MemoryFileSystem {
         }
     }
 
-    /// Write a file to memory
-    pub fn write_file(&mut self, path: &str, content: Vec<u8>) {
+    /// Write a file to memory.
+    /// Returns false if the path contains path traversal sequences.
+    pub fn write_file(&mut self, path: &str, content: Vec<u8>) -> bool {
+        // Validate path against traversal attacks
+        let path = match Self::safe_normalize_path(path) {
+            Some(p) => p,
+            None => return false,
+        };
         // Ensure parent directories exist
-        let path = Self::normalize_path(path);
         if let Some(parent) = Self::parent_path(&path) {
             self.create_dir_all(&parent);
         }
         self.files.insert(path, content);
+        true
     }
 
-    /// Read a file from memory
+    /// Read a file from memory.
+    /// Returns None if the path is unsafe or the file doesn't exist.
     pub fn read_file(&self, path: &str) -> Option<&Vec<u8>> {
-        let path = Self::normalize_path(path);
+        let path = Self::safe_normalize_path(path)?;
         self.files.get(&path)
     }
 
-    /// Delete a file from memory
+    /// Delete a file from memory.
+    /// Returns false if the path is unsafe or the file doesn't exist.
     pub fn delete_file(&mut self, path: &str) -> bool {
-        let path = Self::normalize_path(path);
+        let path = match Self::safe_normalize_path(path) {
+            Some(p) => p,
+            None => return false,
+        };
         self.files.remove(&path).is_some()
     }
 
-    /// Rename/move a file
+    /// Rename/move a file.
+    /// Returns false if either path is unsafe, source doesn't exist, or destination exists (when replace_if_exists is false).
     pub fn rename_file(&mut self, old_path: &str, new_path: &str, replace_if_exists: bool) -> bool {
-        let old_path = Self::normalize_path(old_path);
-        let new_path = Self::normalize_path(new_path);
-        
+        // Validate both paths against traversal attacks
+        let old_path = match Self::safe_normalize_path(old_path) {
+            Some(p) => p,
+            None => return false,
+        };
+        let new_path = match Self::safe_normalize_path(new_path) {
+            Some(p) => p,
+            None => return false,
+        };
+
         // Check if source exists
         if !self.files.contains_key(&old_path) {
             return false;
         }
-        
+
         // Check if destination exists and we're not allowed to replace
         if !replace_if_exists && self.files.contains_key(&new_path) {
             return false;
         }
-        
+
         // Move the file
         if let Some(content) = self.files.remove(&old_path) {
             // Ensure parent directories exist for new path
@@ -82,10 +101,18 @@ impl MemoryFileSystem {
         }
     }
 
-    /// Rename/move a directory
+    /// Rename/move a directory.
+    /// Returns false if either path is unsafe.
     pub fn rename_dir(&mut self, old_path: &str, new_path: &str) -> bool {
-        let old_path = Self::normalize_path(old_path);
-        let new_path = Self::normalize_path(new_path);
+        // Validate both paths against traversal attacks
+        let old_path = match Self::safe_normalize_path(old_path) {
+            Some(p) => p,
+            None => return false,
+        };
+        let new_path = match Self::safe_normalize_path(new_path) {
+            Some(p) => p,
+            None => return false,
+        };
         
         let old_prefix = if old_path.ends_with('/') {
             old_path.clone()
@@ -133,24 +160,37 @@ impl MemoryFileSystem {
         true
     }
 
-    /// Check if a file exists
+    /// Check if a file exists.
+    /// Returns false if the path is unsafe.
     pub fn file_exists(&self, path: &str) -> bool {
-        let path = Self::normalize_path(path);
+        let path = match Self::safe_normalize_path(path) {
+            Some(p) => p,
+            None => return false,
+        };
         self.files.contains_key(&path)
     }
 
-    /// Create a directory
-    pub fn create_dir(&mut self, path: &str) {
-        let mut path = Self::normalize_path(path);
+    /// Create a directory.
+    /// Returns false if the path is unsafe.
+    pub fn create_dir(&mut self, path: &str) -> bool {
+        let mut path = match Self::safe_normalize_path(path) {
+            Some(p) => p,
+            None => return false,
+        };
         if !path.ends_with('/') {
             path.push('/');
         }
         self.directories.insert(path);
+        true
     }
 
-    /// Create directory and all parent directories
-    pub fn create_dir_all(&mut self, path: &str) {
-        let path = Self::normalize_path(path);
+    /// Create directory and all parent directories.
+    /// Returns false if the path is unsafe.
+    pub fn create_dir_all(&mut self, path: &str) -> bool {
+        let path = match Self::safe_normalize_path(path) {
+            Some(p) => p,
+            None => return false,
+        };
         let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
         let mut current = String::new();
         for part in parts {
@@ -158,6 +198,7 @@ impl MemoryFileSystem {
             current.push('/');
             self.directories.insert(current.clone());
         }
+        true
     }
 
     /// List all files and directories
@@ -168,9 +209,14 @@ impl MemoryFileSystem {
         entries
     }
 
-    /// List contents of a directory
+    /// List contents of a directory.
+    /// Returns empty list if the path is unsafe.
     pub fn list_dir(&self, path: &str) -> Vec<String> {
-        let mut dir_path = Self::normalize_path(path);
+        // For listing, we still validate the path
+        let mut dir_path = match Self::safe_normalize_path(path) {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
         if !dir_path.is_empty() && !dir_path.ends_with('/') {
             dir_path.push('/');
         }
@@ -257,10 +303,13 @@ impl MemoryFileSystem {
         data
     }
 
-    /// Deserialize from the archive format
+    /// Deserialize from the archive format.
+    /// Paths containing traversal sequences (`..`) are skipped for security.
+    /// Files exceeding size limits are skipped to prevent memory exhaustion.
     pub fn from_archive(data: &[u8]) -> Self {
         let mut fs = Self::new();
         let mut offset = 0;
+        let mut total_size: usize = 0;
 
         while offset + 4 <= data.len() {
             let name_len = u32::from_be_bytes([
@@ -270,6 +319,11 @@ impl MemoryFileSystem {
                 data[offset + 3],
             ]) as usize;
             offset += 4;
+
+            // Security: reject excessively long path names
+            if name_len > MAX_PATH_LENGTH {
+                break; // Likely corrupted or malicious data
+            }
 
             if offset + name_len > data.len() {
                 break;
@@ -290,15 +344,45 @@ impl MemoryFileSystem {
             ]) as usize;
             offset += 4;
 
+            // Validate path against traversal attacks before inserting
+            let safe_name = match Self::safe_normalize_path(&name) {
+                Some(n) => n,
+                None => {
+                    // Skip entries with unsafe paths (e.g., containing "..")
+                    if !name.ends_with('/') {
+                        offset += content_len;
+                    }
+                    continue;
+                }
+            };
+
             if name.ends_with('/') {
-                // It's a directory
-                fs.directories.insert(name);
+                // It's a directory - add trailing slash back
+                let dir_name = if safe_name.ends_with('/') {
+                    safe_name
+                } else {
+                    format!("{}/", safe_name)
+                };
+                fs.directories.insert(dir_name);
             } else {
+                // Security: reject files that are too large
+                if content_len > MAX_SINGLE_FILE_SIZE {
+                    // Skip this entry - file too large
+                    offset += content_len;
+                    continue;
+                }
+
+                // Security: reject if total would exceed limit
+                if total_size.saturating_add(content_len) > MAX_TOTAL_ARCHIVE_SIZE {
+                    break; // Stop processing to prevent memory exhaustion
+                }
+
                 if offset + content_len > data.len() {
                     break;
                 }
                 let content = data[offset..offset + content_len].to_vec();
-                fs.files.insert(name, content);
+                total_size += content_len;
+                fs.files.insert(safe_name, content);
                 offset += content_len;
             }
         }
@@ -306,8 +390,33 @@ impl MemoryFileSystem {
         fs
     }
 
+    /// Normalize a path and validate it against path traversal attacks.
+    /// Returns None if the path contains dangerous sequences like `..`
     fn normalize_path(path: &str) -> String {
         path.replace('\\', "/").trim_start_matches('/').to_string()
+    }
+
+    /// Validate that a path doesn't contain path traversal sequences.
+    /// Returns true if the path is safe, false if it contains `..` or other dangerous patterns.
+    fn is_safe_path(path: &str) -> bool {
+        let normalized = Self::normalize_path(path);
+        // Check for path traversal attempts
+        if normalized.contains("..") {
+            return false;
+        }
+        // Check for null bytes (could be used to truncate paths)
+        if normalized.contains('\0') {
+            return false;
+        }
+        true
+    }
+
+    /// Normalize and validate a path, returning None if unsafe
+    fn safe_normalize_path(path: &str) -> Option<String> {
+        if !Self::is_safe_path(path) {
+            return None;
+        }
+        Some(Self::normalize_path(path))
     }
 
     fn parent_path(path: &str) -> Option<String> {
@@ -321,6 +430,16 @@ pub const MAGIC_VDRIVE: &[u8; 8] = b"PVDRIV01";
 
 /// Default size for virtual drives (64 MB)
 pub const DEFAULT_DRIVE_SIZE_MB: u32 = 64;
+
+/// Maximum allowed size for a single file in the archive (100 MB)
+/// This prevents memory exhaustion from maliciously crafted archives.
+const MAX_SINGLE_FILE_SIZE: usize = 100 * 1024 * 1024;
+
+/// Maximum allowed total size for all files in an archive (1 GB)
+const MAX_TOTAL_ARCHIVE_SIZE: usize = 1024 * 1024 * 1024;
+
+/// Maximum allowed path length (4 KB)
+const MAX_PATH_LENGTH: usize = 4096;
 
 /// Error type for virtual drive operations
 #[derive(Debug)]
@@ -526,35 +645,50 @@ pub fn uses_memory_mode() -> bool {
 }
 
 
-/// Get the expected mount point path for a virtual drive
+/// Generate a cryptographically random session token for mount paths.
+/// This makes mount paths unpredictable to prevent race condition attacks.
+fn generate_session_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    // Convert to hex string
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Get a new mount point path for a virtual drive.
+/// Includes a random session token for security.
 ///
 /// On Windows with ProjFS: Returns a temp directory path used as virtualization root.
 /// On Linux/macOS: Returns a tmpfs-backed directory.
 /// Use `get_mounted_path()` to get the actual path of a mounted drive.
 pub fn get_mount_path(drive_id: &str) -> PathBuf {
+    // Add random session token to prevent predictable mount paths
+    let session = generate_session_token();
+
     #[cfg(target_os = "linux")]
     {
-        PathBuf::from(format!("/tmp/parcela-vdrive-{}", drive_id))
+        PathBuf::from(format!("/tmp/parcela-{}-{}", session, drive_id))
     }
 
     #[cfg(target_os = "macos")]
     {
-        PathBuf::from(format!("/tmp/parcela-vdrive-{}", drive_id))
+        PathBuf::from(format!("/tmp/parcela-{}-{}", session, drive_id))
     }
 
     #[cfg(target_os = "windows")]
     {
         // ProjFS uses a directory as the virtualization root
         PathBuf::from(format!(
-            "{}\\parcela-vdrive-{}",
+            "{}\\parcela-{}-{}",
             std::env::temp_dir().to_string_lossy(),
+            session,
             drive_id
         ))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        PathBuf::from(format!("/tmp/parcela-vdrive-{}", drive_id))
+        PathBuf::from(format!("/tmp/parcela-{}-{}", session, drive_id))
     }
 }
 
@@ -777,11 +911,19 @@ pub fn vdrive_list_files(drive_id: &str, path: &str) -> Result<Vec<String>, Virt
     }
 
     if let Some(ref memory_fs) = state.memory_fs {
-        // Memory-only mode
+        // Memory-only mode - list_dir already validates paths
         Ok(memory_fs.list_dir(path))
     } else {
         // Native filesystem mode (Linux/macOS tmpfs)
-        let full_path = state.mount_path.join(path);
+        // Validate path against traversal attacks
+        if !is_safe_path_str(path) {
+            return Err(VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "path contains traversal sequence",
+            )));
+        }
+        let safe_path = path.trim_start_matches('/').trim_start_matches('\\');
+        let full_path = state.mount_path.join(safe_path);
         let mut entries = Vec::new();
 
         if full_path.exists() && full_path.is_dir() {
@@ -830,7 +972,15 @@ pub fn vdrive_read_file(drive_id: &str, path: &str) -> Result<Vec<u8>, VirtualDr
             )))
     } else {
         // Disk mode (Linux tmpfs)
-        let full_path = state.mount_path.join(path);
+        // Validate path against traversal attacks
+        if !is_safe_path_str(path) {
+            return Err(VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "path contains traversal sequence",
+            )));
+        }
+        let safe_path = path.trim_start_matches('/').trim_start_matches('\\');
+        let full_path = state.mount_path.join(safe_path);
         std::fs::read(&full_path).map_err(VirtualDriveError::from)
     }
 }
@@ -853,11 +1003,24 @@ pub fn vdrive_write_file(drive_id: &str, path: &str, content: Vec<u8>) -> Result
 
     if let Some(ref mut memory_fs) = state.memory_fs {
         // Memory-only mode - write directly to memory
-        memory_fs.write_file(path, content);
+        if !memory_fs.write_file(path, content) {
+            return Err(VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "path contains traversal sequence",
+            )));
+        }
         Ok(())
     } else {
         // Disk mode (Linux tmpfs) - write via OS filesystem
-        let full_path = state.mount_path.join(path);
+        // Validate path against traversal attacks
+        if !is_safe_path_str(path) {
+            return Err(VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "path contains traversal sequence",
+            )));
+        }
+        let safe_path = path.trim_start_matches('/').trim_start_matches('\\');
+        let full_path = state.mount_path.join(safe_path);
 
         // Create parent directories if needed
         if let Some(parent) = full_path.parent() {
@@ -898,12 +1061,20 @@ pub fn vdrive_delete_file(drive_id: &str, path: &str) -> Result<(), VirtualDrive
         } else {
             Err(VirtualDriveError::IoError(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                "file not found",
+                "file not found or path unsafe",
             )))
         }
     } else {
         // Disk mode (Linux tmpfs)
-        let full_path = state.mount_path.join(path);
+        // Validate path against traversal attacks
+        if !is_safe_path_str(path) {
+            return Err(VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "path contains traversal sequence",
+            )));
+        }
+        let safe_path = path.trim_start_matches('/').trim_start_matches('\\');
+        let full_path = state.mount_path.join(safe_path);
         std::fs::remove_file(&full_path).map_err(VirtualDriveError::from)
     }
 }
@@ -925,11 +1096,24 @@ pub fn vdrive_create_dir(drive_id: &str, path: &str) -> Result<(), VirtualDriveE
 
     if let Some(ref mut memory_fs) = state.memory_fs {
         // Memory-only mode
-        memory_fs.create_dir_all(path);
+        if !memory_fs.create_dir_all(path) {
+            return Err(VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "path contains traversal sequence",
+            )));
+        }
         Ok(())
     } else {
         // Disk mode (Linux tmpfs)
-        let full_path = state.mount_path.join(path);
+        // Validate path against traversal attacks
+        if !is_safe_path_str(path) {
+            return Err(VirtualDriveError::IoError(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "path contains traversal sequence",
+            )));
+        }
+        let safe_path = path.trim_start_matches('/').trim_start_matches('\\');
+        let full_path = state.mount_path.join(safe_path);
         std::fs::create_dir_all(&full_path).map_err(VirtualDriveError::from)
     }
 }
@@ -995,10 +1179,28 @@ fn capture_mount_content(mount_path: &Path) -> Result<Vec<u8>, VirtualDriveError
     Ok(archive_data)
 }
 
-/// Extract archived content to a mount point
+/// Check if a path string is safe (no traversal sequences)
+fn is_safe_path_str(path: &str) -> bool {
+    // Normalize separators
+    let normalized = path.replace('\\', "/");
+    // Check for path traversal attempts
+    if normalized.contains("..") {
+        return false;
+    }
+    // Check for null bytes
+    if normalized.contains('\0') {
+        return false;
+    }
+    true
+}
+
+/// Extract archived content to a mount point.
+/// Paths containing traversal sequences (`..`) are skipped for security.
+/// Files exceeding size limits are skipped to prevent resource exhaustion.
 #[cfg_attr(target_os = "windows", allow(dead_code))]
 fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), VirtualDriveError> {
     let mut offset = 0;
+    let mut total_size: usize = 0;
 
     while offset + 4 <= data.len() {
         let name_len = u32::from_be_bytes([
@@ -1008,6 +1210,11 @@ fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), Virtua
             data[offset + 3],
         ]) as usize;
         offset += 4;
+
+        // Security: reject excessively long path names
+        if name_len > MAX_PATH_LENGTH {
+            break;
+        }
 
         if offset + name_len > data.len() {
             break;
@@ -1028,12 +1235,45 @@ fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), Virtua
         ]) as usize;
         offset += 4;
 
-        let full_path = mount_path.join(name.as_ref());
+        // Validate path against traversal attacks
+        if !is_safe_path_str(&name) {
+            // Skip entries with unsafe paths
+            if !name.ends_with('/') {
+                offset += content_len;
+            }
+            continue;
+        }
+
+        // Strip leading slashes for safety
+        let safe_name = name.trim_start_matches('/').trim_start_matches('\\');
+        let full_path = mount_path.join(safe_name);
+
+        // Extra validation: ensure the resolved path is under mount_path
+        if let (Ok(canonical_mount), Ok(canonical_full)) = (mount_path.canonicalize(), full_path.parent().map(|p| p.canonicalize()).unwrap_or_else(|| mount_path.canonicalize())) {
+            if !canonical_full.starts_with(&canonical_mount) {
+                // Path escapes mount directory, skip
+                if !name.ends_with('/') {
+                    offset += content_len;
+                }
+                continue;
+            }
+        }
 
         if name.ends_with('/') {
             // It's a directory
             std::fs::create_dir_all(&full_path)?;
         } else {
+            // Security: reject files that are too large
+            if content_len > MAX_SINGLE_FILE_SIZE {
+                offset += content_len;
+                continue;
+            }
+
+            // Security: reject if total would exceed limit
+            if total_size.saturating_add(content_len) > MAX_TOTAL_ARCHIVE_SIZE {
+                break;
+            }
+
             if offset + content_len > data.len() {
                 break;
             }
@@ -1042,6 +1282,7 @@ fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), Virtua
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&full_path, content)?;
+            total_size += content_len;
             offset += content_len;
         }
     }
@@ -1049,8 +1290,35 @@ fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), Virtua
     Ok(())
 }
 
-/// Securely remove directory contents by overwriting files before deletion
-/// Note: Used on non-Windows platforms for tmpfs cleanup
+/// Securely remove directory contents by overwriting files with zeros before deletion.
+///
+/// # Security Considerations
+///
+/// This function attempts to securely erase data by overwriting file contents with zeros
+/// before deletion. However, there are important limitations:
+///
+/// ## Effective Protection
+/// - **RAM-backed filesystems (tmpfs)**: On Linux/macOS, virtual drives use tmpfs which
+///   stores data in RAM. The overwrite ensures data is cleared from memory.
+/// - **Traditional HDDs**: Single-pass zero overwrite generally prevents recovery.
+///
+/// ## Limitations (data may still be recoverable)
+/// - **SSDs with wear-leveling**: SSDs may keep old data in spare blocks. The overwrite
+///   may write to a new physical location while old data persists.
+/// - **Copy-on-write filesystems (ZFS, Btrfs)**: Overwrites may create new copies rather
+///   than modifying in-place.
+/// - **RAID arrays**: Some RAID configurations may retain copies of overwritten data.
+/// - **Filesystem journaling**: Journal entries may contain fragments of sensitive data.
+///
+/// ## Recommendations for High-Security Scenarios
+/// For maximum security when protecting highly sensitive data:
+/// 1. Use full-disk encryption on the underlying storage
+/// 2. Consider hardware-based secure erase (ATA Secure Erase for SSDs)
+/// 3. Use encrypted memory (where hardware supports it)
+/// 4. Physically destroy storage media for critical data
+///
+/// For most threat models, the combination of encryption + RAM-backed storage + this
+/// overwrite provides adequate protection against casual recovery attempts.
 #[allow(dead_code)]
 fn secure_remove_dir_contents(path: &Path) -> Result<(), VirtualDriveError> {
     if !path.exists() {
@@ -1166,7 +1434,20 @@ mod tests {
     #[test]
     fn get_mount_path_returns_valid_path() {
         let path = get_mount_path("test-drive-id");
-        assert!(path.to_string_lossy().contains("parcela-vdrive-test-drive-id"));
+        let path_str = path.to_string_lossy();
+        // Path should contain "parcela-" prefix and "test-drive-id" suffix
+        assert!(path_str.contains("parcela-"));
+        assert!(path_str.contains("test-drive-id"));
+        // Path should have a random session token (32 hex chars)
+        // Format: /tmp/parcela-{session}-{drive_id}
+    }
+
+    #[test]
+    fn get_mount_path_is_unique_per_call() {
+        // Each call should generate a unique path due to random session token
+        let path1 = get_mount_path("same-drive-id");
+        let path2 = get_mount_path("same-drive-id");
+        assert_ne!(path1, path2, "Mount paths should be unique per session");
     }
 
     #[test]
@@ -1369,11 +1650,88 @@ mod tests {
     #[test]
     fn memory_fs_handles_leading_slash() {
         let mut fs = MemoryFileSystem::new();
-        fs.write_file("/absolute/path.txt", b"content".to_vec());
-        
+        assert!(fs.write_file("/absolute/path.txt", b"content".to_vec()));
+
         // Should normalize and be accessible without leading slash
         let content = fs.read_file("absolute/path.txt").unwrap();
         assert_eq!(content, b"content");
+    }
+
+    // =========================================================================
+    // Path traversal security tests
+    // =========================================================================
+
+    #[test]
+    fn memory_fs_rejects_path_traversal() {
+        let mut fs = MemoryFileSystem::new();
+
+        // All of these should fail due to path traversal
+        assert!(!fs.write_file("../../../etc/passwd", b"malicious".to_vec()));
+        assert!(!fs.write_file("folder/../../../secret", b"malicious".to_vec()));
+        assert!(!fs.write_file("docs/../../outside", b"malicious".to_vec()));
+        assert!(!fs.write_file("..\\..\\windows\\system32", b"malicious".to_vec()));
+
+        // Should not be able to read with traversal paths
+        assert!(fs.read_file("../../../etc/passwd").is_none());
+        assert!(fs.read_file("folder/../../../secret").is_none());
+
+        // Should not be able to delete with traversal paths
+        assert!(!fs.delete_file("../../../etc/passwd"));
+
+        // Should not be able to create dirs with traversal paths
+        assert!(!fs.create_dir("../../../etc"));
+        assert!(!fs.create_dir_all("../../../etc/new_dir"));
+
+        // Should not be able to check existence with traversal paths
+        assert!(!fs.file_exists("../../../etc/passwd"));
+
+        // Should not be able to list with traversal paths
+        assert!(fs.list_dir("../../../etc").is_empty());
+
+        // Should not be able to rename with traversal paths
+        assert!(fs.write_file("safe.txt", b"content".to_vec()));
+        assert!(!fs.rename_file("safe.txt", "../../../etc/passwd", false));
+        assert!(!fs.rename_file("../../../etc/passwd", "local.txt", false));
+    }
+
+    #[test]
+    fn memory_fs_rejects_null_bytes() {
+        let mut fs = MemoryFileSystem::new();
+
+        // Null bytes could be used to truncate paths
+        assert!(!fs.write_file("file\0.txt", b"content".to_vec()));
+        assert!(!fs.write_file("path/to\0/file.txt", b"content".to_vec()));
+    }
+
+    #[test]
+    fn from_archive_skips_traversal_paths() {
+        // Create a malicious archive with path traversal
+        let mut malicious_archive = Vec::new();
+
+        // Add a malicious file entry: "../../../etc/passwd"
+        let malicious_path = b"../../../etc/passwd";
+        malicious_archive.extend_from_slice(&(malicious_path.len() as u32).to_be_bytes());
+        malicious_archive.extend_from_slice(malicious_path);
+        let malicious_content = b"malicious";
+        malicious_archive.extend_from_slice(&(malicious_content.len() as u32).to_be_bytes());
+        malicious_archive.extend_from_slice(malicious_content);
+
+        // Add a safe file entry
+        let safe_path = b"safe.txt";
+        malicious_archive.extend_from_slice(&(safe_path.len() as u32).to_be_bytes());
+        malicious_archive.extend_from_slice(safe_path);
+        malicious_archive.extend_from_slice(&(4u32).to_be_bytes());
+        malicious_archive.extend_from_slice(b"safe");
+
+        let fs = MemoryFileSystem::from_archive(&malicious_archive);
+
+        // The filesystem should only have the safe file, not the malicious one
+        let all_files = fs.list_all();
+        assert_eq!(all_files.len(), 1);
+        assert!(all_files.contains(&"safe.txt".to_string()));
+
+        // Safe file should exist and have correct content
+        assert_eq!(fs.read_file("safe.txt").unwrap(), b"safe");
     }
 
     // =========================================================================

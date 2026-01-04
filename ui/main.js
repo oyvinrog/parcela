@@ -19,11 +19,20 @@ const state = {
   },
 };
 
+const AUTO_REFRESH_MS = 6000;
+let autoRefreshTimer = null;
+let autoRefreshInFlight = false;
+const RECENT_VAULTS_KEY = "parcela.recentVaults";
+const MAX_RECENT_VAULTS = 6;
+
 const shareIndexRegex = /^(.*)\.share([1-3])$/;
 
 const statusEl = document.getElementById("status-msg");
+const appVersionEl = document.getElementById("app-version");
 const loginScreen = document.getElementById("login-screen");
 const vaultScreen = document.getElementById("vault-screen");
+const recentVaultsEl = document.getElementById("recent-vaults");
+const recentVaultListEl = document.getElementById("recent-vault-list");
 
 const vaultPasswordEl = document.getElementById("vault-password");
 const vaultCurrentPathEl = document.getElementById("vault-current-path");
@@ -94,6 +103,23 @@ function setStatus(message, kind = "") {
   if (kind) statusEl.classList.add(kind);
 }
 
+async function loadAppVersion() {
+  if (!appVersionEl) return;
+  const getVersion = window.__TAURI__?.app?.getVersion;
+  if (!getVersion) {
+    appVersionEl.classList.add("hidden");
+    return;
+  }
+
+  try {
+    const version = await getVersion();
+    appVersionEl.textContent = `v${version}`;
+  } catch (err) {
+    console.warn("[Parcela] Failed to load app version:", err);
+    appVersionEl.classList.add("hidden");
+  }
+}
+
 function showVaultScreen() {
   loginScreen.classList.add("hidden");
   vaultScreen.classList.remove("hidden");
@@ -101,11 +127,14 @@ function showVaultScreen() {
   vaultNameEl.textContent = state.vaultPath
     ? getFileName(state.vaultPath)
     : "Vault";
+  startAutoRefresh();
 }
 
 function showLoginScreen() {
   loginScreen.classList.remove("hidden");
   vaultScreen.classList.add("hidden");
+  stopAutoRefresh();
+  renderRecentVaults();
 }
 
 function getFileName(path) {
@@ -118,6 +147,63 @@ function getDirName(path) {
   if (parts.length <= 1) return "";
   parts.pop();
   return parts.join(path.includes("\\") ? "\\" : "/");
+}
+
+function loadRecentVaults() {
+  try {
+    const raw = localStorage.getItem(RECENT_VAULTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry) => typeof entry === "string" && entry.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentVaults(entries) {
+  localStorage.setItem(RECENT_VAULTS_KEY, JSON.stringify(entries));
+}
+
+function addRecentVault(path) {
+  const entries = loadRecentVaults().filter((entry) => entry !== path);
+  entries.unshift(path);
+  saveRecentVaults(entries.slice(0, MAX_RECENT_VAULTS));
+  renderRecentVaults();
+}
+
+function renderRecentVaults() {
+  if (!recentVaultsEl || !recentVaultListEl) return;
+  const entries = loadRecentVaults();
+  if (entries.length === 0) {
+    recentVaultsEl.classList.add("hidden");
+    recentVaultListEl.innerHTML = "";
+    return;
+  }
+
+  recentVaultsEl.classList.remove("hidden");
+  recentVaultListEl.innerHTML = "";
+  entries.forEach((path) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "recent-item";
+
+    const name = document.createElement("div");
+    name.className = "recent-name";
+    name.textContent = getFileName(path);
+
+    const fullPath = document.createElement("div");
+    fullPath.className = "recent-path";
+    fullPath.textContent = path;
+
+    item.appendChild(name);
+    item.appendChild(fullPath);
+    item.addEventListener("click", () => {
+      pendingVaultPath = path;
+      setStatus(`Selected recent vault: ${getFileName(path)}`, "success");
+      vaultPasswordEl.focus();
+    });
+    recentVaultListEl.appendChild(item);
+  });
 }
 
 function getShareInfo(path) {
@@ -246,6 +332,31 @@ async function refreshAllAvailability() {
   for (const drive of state.vault.virtual_drives || []) {
     await refreshAvailability(drive);
   }
+}
+
+async function autoRefreshStatus() {
+  if (!state.vaultPath || autoRefreshInFlight) return;
+  autoRefreshInFlight = true;
+  try {
+    await refreshAllAvailability();
+    renderFileList();
+    renderDetail();
+  } catch (err) {
+    console.warn("[Parcela] Auto-refresh failed:", err);
+  } finally {
+    autoRefreshInFlight = false;
+  }
+}
+
+function startAutoRefresh() {
+  if (autoRefreshTimer) return;
+  autoRefreshTimer = setInterval(autoRefreshStatus, AUTO_REFRESH_MS);
+}
+
+function stopAutoRefresh() {
+  if (!autoRefreshTimer) return;
+  clearInterval(autoRefreshTimer);
+  autoRefreshTimer = null;
 }
 
 async function refreshUnlockedDrives() {
@@ -633,6 +744,7 @@ async function handleOpenVault() {
     state.vaultPath = vaultPath;
     state.vaultPassword = password;
     state.vault = vault;
+    addRecentVault(vaultPath);
     // Ensure virtual_drives array exists
     if (!state.vault.virtual_drives) {
       state.vault.virtual_drives = [];
@@ -687,6 +799,7 @@ async function handleCreateVault() {
     state.vaultPath = savePath;
     state.vaultPassword = password;
     state.vault = vault;
+    addRecentVault(savePath);
     state.selectedFileId = null;
     setSelectedFiles([]);
     renderFileList();
@@ -790,19 +903,47 @@ async function handleRelocateShare(index, isDrive = false) {
   }
 
   const shareFilename = getFileName(currentPath);
-  const title = `Move "${shareFilename}" to folder`;
+  const title = `Relocate "${shareFilename}"`;
 
-  const destFolder = await invoke("pick_destination_folder", { title });
-  if (!destFolder) return;
+  let startDir = getDirName(currentPath);
+  if (!startDir) {
+    startDir = window.__TAURI__?.os?.platform?.() === "linux" ? "/media" : "";
+  }
+  const destPath = await invoke("pick_destination_path", {
+    title,
+    suggestedName: shareFilename,
+    startDir: startDir || null,
+  });
+  if (!destPath) return;
 
   try {
-    const newPath = await invoke("move_file", { source: currentPath, destFolder });
+    setStatus(`Relocating to ${destPath}...`);
+    let newPath = await invoke("move_file", { source: currentPath, destPath });
+    let [newExists, oldExists] = await invoke("check_paths", {
+      paths: [newPath, currentPath],
+    });
+
+    if (!newExists && oldExists) {
+      newPath = await invoke("move_file", { source: currentPath, destPath });
+      [newExists] = await invoke("check_paths", { paths: [newPath] });
+    } else if (!newExists && !oldExists) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      [newExists] = await invoke("check_paths", { paths: [newPath] });
+    }
+
     entry.shares[index] = newPath;
-    await refreshAvailability(entry);
-    await saveVault();
     renderFileList();
     renderDetail();
-    setStatus("Share moved successfully.", "success");
+    await refreshAvailability(entry);
+    if (!entry.available[index] && newExists) {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      await refreshAvailability(entry);
+    }
+    await saveVault();
+    await autoRefreshStatus();
+    renderFileList();
+    renderDetail();
+    setStatus(`Share moved to ${newPath}.`, "success");
   } catch (err) {
     setStatus(`Failed to move: ${err}`, "error");
   }
@@ -913,10 +1054,24 @@ async function handleUnlockDrive() {
     showLoading("Unlocking drive…");
     await waitForPaint();
     const unlockInfo = await invoke("unlock_virtual_drive", {
-      sharePaths: availablePaths.slice(0, 2),
+      sharePaths: availablePaths,
       password: state.vaultPassword,
     });
     hideLoading();
+
+    if (drive.id !== unlockInfo.drive_id) {
+      const matchingDrive = (state.vault.virtual_drives || []).find(
+        (d) => d.id === unlockInfo.drive_id
+      );
+      if (matchingDrive && matchingDrive !== drive) {
+        state.selectedFileId = matchingDrive.id;
+        state.selectedType = "drive";
+      } else {
+        drive.id = unlockInfo.drive_id;
+        state.selectedFileId = unlockInfo.drive_id;
+      }
+      await saveVault();
+    }
 
     state.unlockedDrives.set(unlockInfo.drive_id, {
       mount_path: unlockInfo.mount_path,
@@ -1512,6 +1667,7 @@ handleOpenVault = async function() {
     state.vaultPath = vaultPath;
     state.vaultPassword = password;
     state.vault = vault;
+    addRecentVault(vaultPath);
     // Ensure virtual_drives array exists
     if (!state.vault.virtual_drives) {
       state.vault.virtual_drives = [];
@@ -1550,3 +1706,4 @@ document.getElementById("open-vault").addEventListener("click", handleOpenVault)
 showLoginScreen();
 renderFileList();
 renderDetail();
+loadAppVersion();
