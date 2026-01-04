@@ -78,6 +78,34 @@ fn pick_destination_path(
         .map(|path| path.to_string_lossy().to_string())
 }
 
+/// Helper for Windows: retry an operation that may fail due to antivirus/indexer locks.
+/// Retries up to `max_attempts` times with exponential backoff starting at `base_delay_ms`.
+#[cfg(windows)]
+fn retry_on_windows_lock<T, F>(mut op: F, max_attempts: u32, base_delay_ms: u64) -> std::io::Result<T>
+where
+    F: FnMut() -> std::io::Result<T>,
+{
+    let mut last_err = None;
+    for attempt in 0..max_attempts {
+        match op() {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                // Only retry on "Access denied" (os error 5) or "Sharing violation" (os error 32)
+                let should_retry = matches!(e.raw_os_error(), Some(5) | Some(32));
+                if should_retry && attempt + 1 < max_attempts {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        base_delay_ms * (1 << attempt), // exponential: 100, 200, 400, 800...
+                    ));
+                    last_err = Some(e);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| std::io::Error::new(std::io::ErrorKind::Other, "retry exhausted")))
+}
+
 #[tauri::command]
 fn move_file(source: String, dest_path: String) -> Result<String, String> {
     let source_path = std::path::Path::new(&source);
@@ -100,8 +128,16 @@ fn move_file(source: String, dest_path: String) -> Result<String, String> {
     }
 
     if dest_path.exists() {
-        std::fs::remove_file(&dest_path)
-            .map_err(|e| format!("Failed to remove existing destination file: {}", e))?;
+        #[cfg(windows)]
+        {
+            retry_on_windows_lock(|| std::fs::remove_file(&dest_path), 5, 100)
+                .map_err(|e| format!("Failed to remove existing destination file: {}", e))?;
+        }
+        #[cfg(not(windows))]
+        {
+            std::fs::remove_file(&dest_path)
+                .map_err(|e| format!("Failed to remove existing destination file: {}", e))?;
+        }
     }
 
     let source_len = std::fs::metadata(source_path)
@@ -124,38 +160,26 @@ fn move_file(source: String, dest_path: String) -> Result<String, String> {
 
     std::fs::copy(source_path, &temp_path)
         .map_err(|e| format!("Failed to copy file: {}", e))?;
+    
+    // On Windows, reading metadata right after copy can fail due to antivirus scanning
+    #[cfg(windows)]
+    let temp_len = {
+        retry_on_windows_lock(|| std::fs::metadata(&temp_path).map(|m| m.len()), 5, 100)
+            .map_err(|e| format!("Failed to read temp metadata: {}", e))?
+    };
+    #[cfg(not(windows))]
     let temp_len = std::fs::metadata(&temp_path)
         .map_err(|e| format!("Failed to read temp metadata: {}", e))?
         .len();
+    
     if temp_len != source_len {
         let _ = std::fs::remove_file(&temp_path);
         return Err("Copied file size does not match source".to_string());
     }
 
     // Sync the copied file to ensure durability before rename.
-    // On Windows, retry if the file is temporarily locked (antivirus, indexer, etc.)
-    #[cfg(windows)]
-    {
-        let mut last_err = None;
-        for attempt in 0..5 {
-            match std::fs::File::open(&temp_path).and_then(|file| file.sync_all()) {
-                Ok(()) => {
-                    last_err = None;
-                    break;
-                }
-                Err(e) => {
-                    last_err = Some(e);
-                    if attempt < 4 {
-                        std::thread::sleep(std::time::Duration::from_millis(100 * (attempt + 1) as u64));
-                    }
-                }
-            }
-        }
-        if let Some(e) = last_err {
-            let _ = std::fs::remove_file(&temp_path);
-            return Err(format!("Failed to sync copied file: {} (file may be locked by antivirus or indexer)", e));
-        }
-    }
+    // On Windows, skip explicit sync - the CopyFile API handles flushing,
+    // and opening the file can fail due to antivirus/indexer locks.
     #[cfg(not(windows))]
     {
         std::fs::File::open(&temp_path)
@@ -163,8 +187,18 @@ fn move_file(source: String, dest_path: String) -> Result<String, String> {
             .map_err(|e| format!("Failed to sync copied file: {}", e))?;
     }
 
-    std::fs::rename(&temp_path, &dest_path)
-        .map_err(|e| format!("Failed to finalize destination file: {}", e))?;
+    // Rename temp file to final destination
+    // On Windows, retry if antivirus is still scanning the file
+    #[cfg(windows)]
+    {
+        retry_on_windows_lock(|| std::fs::rename(&temp_path, &dest_path), 5, 100)
+            .map_err(|e| format!("Failed to finalize destination file: {}", e))?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(&temp_path, &dest_path)
+            .map_err(|e| format!("Failed to finalize destination file: {}", e))?;
+    }
 
     #[cfg(unix)]
     {
@@ -173,15 +207,32 @@ fn move_file(source: String, dest_path: String) -> Result<String, String> {
         }
     }
 
+    // Verify destination file size
+    #[cfg(windows)]
+    let dest_len = {
+        retry_on_windows_lock(|| std::fs::metadata(&dest_path).map(|m| m.len()), 5, 100)
+            .map_err(|e| format!("Failed to read destination metadata: {}", e))?
+    };
+    #[cfg(not(windows))]
     let dest_len = std::fs::metadata(&dest_path)
         .map_err(|e| format!("Failed to read destination metadata: {}", e))?
         .len();
+    
     if dest_len != source_len {
         return Err("Destination file size does not match source".to_string());
     }
 
-    std::fs::remove_file(source_path)
-        .map_err(|e| format!("Failed to remove original file after copy: {}", e))?;
+    // Remove original file - also retry on Windows
+    #[cfg(windows)]
+    {
+        retry_on_windows_lock(|| std::fs::remove_file(source_path), 5, 100)
+            .map_err(|e| format!("Failed to remove original file after copy: {}", e))?;
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::remove_file(source_path)
+            .map_err(|e| format!("Failed to remove original file after copy: {}", e))?;
+    }
 
     Ok(dest_path.to_string_lossy().to_string())
 }
