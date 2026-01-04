@@ -145,6 +145,55 @@ body::before {
   margin-top: 28px;
 }
 
+.recent-vaults {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--panel-border);
+  display: grid;
+  gap: 12px;
+}
+
+.recent-title {
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.recent-list {
+  display: grid;
+  gap: 10px;
+}
+
+.recent-item {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.6);
+  text-align: left;
+  cursor: pointer;
+}
+
+.recent-item:hover {
+  border-color: var(--accent);
+  box-shadow: 0 8px 20px rgba(228, 106, 46, 0.15);
+}
+
+.recent-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.recent-path {
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-word;
+}
+
 button.large {
   flex: 1;
   padding: 18px 24px;

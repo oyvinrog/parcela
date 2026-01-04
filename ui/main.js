@@ -22,6 +22,8 @@ const state = {
 const AUTO_REFRESH_MS = 6000;
 let autoRefreshTimer = null;
 let autoRefreshInFlight = false;
+const RECENT_VAULTS_KEY = "parcela.recentVaults";
+const MAX_RECENT_VAULTS = 6;
 
 const shareIndexRegex = /^(.*)\.share([1-3])$/;
 
@@ -29,6 +31,8 @@ const statusEl = document.getElementById("status-msg");
 const appVersionEl = document.getElementById("app-version");
 const loginScreen = document.getElementById("login-screen");
 const vaultScreen = document.getElementById("vault-screen");
+const recentVaultsEl = document.getElementById("recent-vaults");
+const recentVaultListEl = document.getElementById("recent-vault-list");
 
 const vaultPasswordEl = document.getElementById("vault-password");
 const vaultCurrentPathEl = document.getElementById("vault-current-path");
@@ -130,6 +134,7 @@ function showLoginScreen() {
   loginScreen.classList.remove("hidden");
   vaultScreen.classList.add("hidden");
   stopAutoRefresh();
+  renderRecentVaults();
 }
 
 function getFileName(path) {
@@ -142,6 +147,63 @@ function getDirName(path) {
   if (parts.length <= 1) return "";
   parts.pop();
   return parts.join(path.includes("\\") ? "\\" : "/");
+}
+
+function loadRecentVaults() {
+  try {
+    const raw = localStorage.getItem(RECENT_VAULTS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry) => typeof entry === "string" && entry.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function saveRecentVaults(entries) {
+  localStorage.setItem(RECENT_VAULTS_KEY, JSON.stringify(entries));
+}
+
+function addRecentVault(path) {
+  const entries = loadRecentVaults().filter((entry) => entry !== path);
+  entries.unshift(path);
+  saveRecentVaults(entries.slice(0, MAX_RECENT_VAULTS));
+  renderRecentVaults();
+}
+
+function renderRecentVaults() {
+  if (!recentVaultsEl || !recentVaultListEl) return;
+  const entries = loadRecentVaults();
+  if (entries.length === 0) {
+    recentVaultsEl.classList.add("hidden");
+    recentVaultListEl.innerHTML = "";
+    return;
+  }
+
+  recentVaultsEl.classList.remove("hidden");
+  recentVaultListEl.innerHTML = "";
+  entries.forEach((path) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "recent-item";
+
+    const name = document.createElement("div");
+    name.className = "recent-name";
+    name.textContent = getFileName(path);
+
+    const fullPath = document.createElement("div");
+    fullPath.className = "recent-path";
+    fullPath.textContent = path;
+
+    item.appendChild(name);
+    item.appendChild(fullPath);
+    item.addEventListener("click", () => {
+      pendingVaultPath = path;
+      setStatus(`Selected recent vault: ${getFileName(path)}`, "success");
+      vaultPasswordEl.focus();
+    });
+    recentVaultListEl.appendChild(item);
+  });
 }
 
 function getShareInfo(path) {
@@ -682,6 +744,7 @@ async function handleOpenVault() {
     state.vaultPath = vaultPath;
     state.vaultPassword = password;
     state.vault = vault;
+    addRecentVault(vaultPath);
     // Ensure virtual_drives array exists
     if (!state.vault.virtual_drives) {
       state.vault.virtual_drives = [];
@@ -736,6 +799,7 @@ async function handleCreateVault() {
     state.vaultPath = savePath;
     state.vaultPassword = password;
     state.vault = vault;
+    addRecentVault(savePath);
     state.selectedFileId = null;
     setSelectedFiles([]);
     renderFileList();
@@ -1603,6 +1667,7 @@ handleOpenVault = async function() {
     state.vaultPath = vaultPath;
     state.vaultPassword = password;
     state.vault = vault;
+    addRecentVault(vaultPath);
     // Ensure virtual_drives array exists
     if (!state.vault.virtual_drives) {
       state.vault.virtual_drives = [];
