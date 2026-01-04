@@ -615,35 +615,50 @@ pub fn uses_memory_mode() -> bool {
 }
 
 
-/// Get the expected mount point path for a virtual drive
+/// Generate a cryptographically random session token for mount paths.
+/// This makes mount paths unpredictable to prevent race condition attacks.
+fn generate_session_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    // Convert to hex string
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Get a new mount point path for a virtual drive.
+/// Includes a random session token for security.
 ///
 /// On Windows with ProjFS: Returns a temp directory path used as virtualization root.
 /// On Linux/macOS: Returns a tmpfs-backed directory.
 /// Use `get_mounted_path()` to get the actual path of a mounted drive.
 pub fn get_mount_path(drive_id: &str) -> PathBuf {
+    // Add random session token to prevent predictable mount paths
+    let session = generate_session_token();
+
     #[cfg(target_os = "linux")]
     {
-        PathBuf::from(format!("/tmp/parcela-vdrive-{}", drive_id))
+        PathBuf::from(format!("/tmp/parcela-{}-{}", session, drive_id))
     }
 
     #[cfg(target_os = "macos")]
     {
-        PathBuf::from(format!("/tmp/parcela-vdrive-{}", drive_id))
+        PathBuf::from(format!("/tmp/parcela-{}-{}", session, drive_id))
     }
 
     #[cfg(target_os = "windows")]
     {
         // ProjFS uses a directory as the virtualization root
         PathBuf::from(format!(
-            "{}\\parcela-vdrive-{}",
+            "{}\\parcela-{}-{}",
             std::env::temp_dir().to_string_lossy(),
+            session,
             drive_id
         ))
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
-        PathBuf::from(format!("/tmp/parcela-vdrive-{}", drive_id))
+        PathBuf::from(format!("/tmp/parcela-{}-{}", session, drive_id))
     }
 }
 
@@ -1343,7 +1358,20 @@ mod tests {
     #[test]
     fn get_mount_path_returns_valid_path() {
         let path = get_mount_path("test-drive-id");
-        assert!(path.to_string_lossy().contains("parcela-vdrive-test-drive-id"));
+        let path_str = path.to_string_lossy();
+        // Path should contain "parcela-" prefix and "test-drive-id" suffix
+        assert!(path_str.contains("parcela-"));
+        assert!(path_str.contains("test-drive-id"));
+        // Path should have a random session token (32 hex chars)
+        // Format: /tmp/parcela-{session}-{drive_id}
+    }
+
+    #[test]
+    fn get_mount_path_is_unique_per_call() {
+        // Each call should generate a unique path due to random session token
+        let path1 = get_mount_path("same-drive-id");
+        let path2 = get_mount_path("same-drive-id");
+        assert_ne!(path1, path2, "Mount paths should be unique per session");
     }
 
     #[test]
