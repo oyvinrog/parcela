@@ -87,7 +87,7 @@ fn derive_key_legacy(password: &str) -> SecureKey {
 /// Derive encryption key using Argon2id with high-security parameters.
 /// This function is intentionally slow (10-20 seconds) to protect against brute-force attacks.
 /// Returns a SecureKey that will be zeroed on drop.
-pub fn derive_key(password: &str, salt: &[u8]) -> Result<SecureKey, ParcelaError> {
+pub(crate) fn derive_key(password: &str, salt: &[u8]) -> Result<SecureKey, ParcelaError> {
     let params = Params::new(ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, Some(32))
         .map_err(|_| ParcelaError::CryptoFailure)?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
