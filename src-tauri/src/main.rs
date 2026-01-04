@@ -233,9 +233,56 @@ fn check_paths(paths: Vec<String>) -> Vec<bool> {
         .collect()
 }
 
+/// Open a path in the system's default application.
+/// Only allows opening directories or Parcela-related files for security.
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
-    open::that(path).map_err(|e| e.to_string())
+    // Security: reject paths with traversal sequences
+    if path.contains("..") {
+        return Err("Refusing to open path with traversal sequence".to_string());
+    }
+    if path.contains('\0') {
+        return Err("Refusing to open path with null byte".to_string());
+    }
+
+    let path_obj = std::path::Path::new(&path);
+
+    // Security: only allow opening directories (for file browser)
+    // or Parcela-specific file types
+    if path_obj.is_dir() {
+        // Allow opening directories (mount points, etc.)
+        return open::that(&path).map_err(|e| e.to_string());
+    }
+
+    if path_obj.is_file() {
+        // Only allow opening Parcela-related file types
+        let extension = path_obj
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let filename = path_obj
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+
+        let is_parcela_file = extension == "pva"
+            || filename.ends_with(".share1")
+            || filename.ends_with(".share2")
+            || filename.ends_with(".share3")
+            || filename.ends_with(".vdrive");
+
+        if is_parcela_file {
+            return open::that(&path).map_err(|e| e.to_string());
+        }
+
+        return Err(format!(
+            "Refusing to open non-Parcela file type: {}",
+            path_obj.display()
+        ));
+    }
+
+    // Path doesn't exist or is a special file type
+    Err(format!("Path not found or not openable: {}", path))
 }
 
 /// Create a new virtual drive in the vault
