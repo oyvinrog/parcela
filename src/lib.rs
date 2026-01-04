@@ -25,7 +25,10 @@ pub use projfs_fs::is_projfs_available;
 pub const MAGIC_BLOB_V1: &[u8; 8] = b"PARCELA1";
 /// Current format magic (Argon2id key derivation)
 pub const MAGIC_BLOB: &[u8; 8] = b"PARCELA2";
+/// Legacy share format (no checksum)
 pub const MAGIC_SHARE: &[u8; 8] = b"PSHARE01";
+/// Current share format with SHA-256 checksum for integrity verification
+pub const MAGIC_SHARE_V2: &[u8; 8] = b"PSHARE02";
 
 /// Salt size for Argon2id
 pub const SALT_SIZE: usize = 32;
@@ -255,37 +258,83 @@ pub fn combine_shares(shares: &[Share]) -> Result<Vec<u8>, ParcelaError> {
     Ok(secret)
 }
 
+/// Encode a share with integrity checksum (PSHARE02 format).
+/// Format: MAGIC (8) + INDEX (1) + TOTAL (1) + THRESHOLD (1) + LEN (4) + PAYLOAD (N) + SHA256 (32)
 pub fn encode_share(share: &Share) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8 + 1 + 1 + 1 + 4 + share.payload.len());
-    out.extend_from_slice(MAGIC_SHARE);
+    // Calculate checksum over index + payload
+    let mut hasher = Sha256::new();
+    hasher.update([share.index]);
+    hasher.update(&share.payload);
+    let checksum = hasher.finalize();
+
+    let mut out = Vec::with_capacity(8 + 1 + 1 + 1 + 4 + share.payload.len() + 32);
+    out.extend_from_slice(MAGIC_SHARE_V2);
     out.push(share.index);
     out.push(SHARE_TOTAL);
     out.push(SHARE_THRESHOLD);
     let len = share.payload.len() as u32;
     out.extend_from_slice(&len.to_be_bytes());
     out.extend_from_slice(&share.payload);
+    out.extend_from_slice(&checksum);
     out
 }
 
+/// Decode a share, supporting both legacy (PSHARE01) and current (PSHARE02) formats.
 pub fn decode_share(data: &[u8]) -> Result<Share, ParcelaError> {
     if data.len() < 8 + 1 + 1 + 1 + 4 {
         return Err(ParcelaError::InvalidFormat("share too small"));
     }
-    if &data[..8] != MAGIC_SHARE {
-        return Err(ParcelaError::InvalidFormat("bad share magic"));
+
+    let magic = &data[..8];
+
+    // Handle legacy PSHARE01 format (no checksum)
+    if magic == MAGIC_SHARE {
+        let index = data[8];
+        let total = data[9];
+        let threshold = data[10];
+        if total != SHARE_TOTAL || threshold != SHARE_THRESHOLD {
+            return Err(ParcelaError::InvalidShare("unsupported scheme"));
+        }
+        let len = u32::from_be_bytes([data[11], data[12], data[13], data[14]]) as usize;
+        let payload = data
+            .get(15..15 + len)
+            .ok_or(ParcelaError::InvalidFormat("truncated share"))?
+            .to_vec();
+        return Ok(Share { index, payload });
     }
-    let index = data[8];
-    let total = data[9];
-    let threshold = data[10];
-    if total != SHARE_TOTAL || threshold != SHARE_THRESHOLD {
-        return Err(ParcelaError::InvalidShare("unsupported scheme"));
+
+    // Handle current PSHARE02 format (with SHA-256 checksum)
+    if magic == MAGIC_SHARE_V2 {
+        let index = data[8];
+        let total = data[9];
+        let threshold = data[10];
+        if total != SHARE_TOTAL || threshold != SHARE_THRESHOLD {
+            return Err(ParcelaError::InvalidShare("unsupported scheme"));
+        }
+        let len = u32::from_be_bytes([data[11], data[12], data[13], data[14]]) as usize;
+
+        // Verify we have enough data for payload + checksum
+        if data.len() < 15 + len + 32 {
+            return Err(ParcelaError::InvalidFormat("truncated share or checksum"));
+        }
+
+        let payload = data[15..15 + len].to_vec();
+        let stored_checksum = &data[15 + len..15 + len + 32];
+
+        // Verify checksum
+        let mut hasher = Sha256::new();
+        hasher.update([index]);
+        hasher.update(&payload);
+        let computed_checksum = hasher.finalize();
+
+        if computed_checksum.as_slice() != stored_checksum {
+            return Err(ParcelaError::InvalidShare("checksum mismatch - share corrupted"));
+        }
+
+        return Ok(Share { index, payload });
     }
-    let len = u32::from_be_bytes([data[11], data[12], data[13], data[14]]) as usize;
-    let payload = data
-        .get(15..15 + len)
-        .ok_or(ParcelaError::InvalidFormat("truncated share"))?
-        .to_vec();
-    Ok(Share { index, payload })
+
+    Err(ParcelaError::InvalidFormat("bad share magic"))
 }
 
 fn gf_add(a: u8, b: u8) -> u8 {
@@ -457,21 +506,48 @@ mod tests {
             index: 1,
             payload: vec![1, 2, 3, 4],
         });
+        // Truncate the checksum (last 32 bytes)
         data.truncate(data.len() - 2);
+        let err = decode_share(&data).unwrap_err();
+        // With new format, truncation affects checksum verification
+        assert!(matches!(
+            err,
+            ParcelaError::InvalidFormat("truncated share or checksum")
+        ));
+    }
+
+    #[test]
+    fn decode_share_detects_corruption() {
+        let mut data = encode_share(&Share {
+            index: 1,
+            payload: vec![1, 2, 3, 4],
+        });
+        // Corrupt the payload (flip a bit)
+        data[15] ^= 0xFF;
         let err = decode_share(&data).unwrap_err();
         assert!(matches!(
             err,
-            ParcelaError::InvalidFormat("truncated share")
+            ParcelaError::InvalidShare("checksum mismatch - share corrupted")
         ));
     }
 
     #[test]
     fn decode_share_rejects_unsupported_scheme() {
-        let mut data = encode_share(&Share {
+        // Use legacy format to test scheme validation (since new format
+        // would fail checksum first)
+        let share = Share {
             index: 1,
             payload: vec![1, 2, 3],
-        });
-        data[9] = 4;
+        };
+        let mut data = Vec::with_capacity(8 + 1 + 1 + 1 + 4 + share.payload.len());
+        data.extend_from_slice(MAGIC_SHARE); // Legacy format
+        data.push(share.index);
+        data.push(4); // Invalid total (not 3)
+        data.push(SHARE_THRESHOLD);
+        let len = share.payload.len() as u32;
+        data.extend_from_slice(&len.to_be_bytes());
+        data.extend_from_slice(&share.payload);
+
         let err = decode_share(&data).unwrap_err();
         assert!(matches!(
             err,
