@@ -305,9 +305,11 @@ impl MemoryFileSystem {
 
     /// Deserialize from the archive format.
     /// Paths containing traversal sequences (`..`) are skipped for security.
+    /// Files exceeding size limits are skipped to prevent memory exhaustion.
     pub fn from_archive(data: &[u8]) -> Self {
         let mut fs = Self::new();
         let mut offset = 0;
+        let mut total_size: usize = 0;
 
         while offset + 4 <= data.len() {
             let name_len = u32::from_be_bytes([
@@ -317,6 +319,11 @@ impl MemoryFileSystem {
                 data[offset + 3],
             ]) as usize;
             offset += 4;
+
+            // Security: reject excessively long path names
+            if name_len > MAX_PATH_LENGTH {
+                break; // Likely corrupted or malicious data
+            }
 
             if offset + name_len > data.len() {
                 break;
@@ -358,10 +365,23 @@ impl MemoryFileSystem {
                 };
                 fs.directories.insert(dir_name);
             } else {
+                // Security: reject files that are too large
+                if content_len > MAX_SINGLE_FILE_SIZE {
+                    // Skip this entry - file too large
+                    offset += content_len;
+                    continue;
+                }
+
+                // Security: reject if total would exceed limit
+                if total_size.saturating_add(content_len) > MAX_TOTAL_ARCHIVE_SIZE {
+                    break; // Stop processing to prevent memory exhaustion
+                }
+
                 if offset + content_len > data.len() {
                     break;
                 }
                 let content = data[offset..offset + content_len].to_vec();
+                total_size += content_len;
                 fs.files.insert(safe_name, content);
                 offset += content_len;
             }
@@ -410,6 +430,16 @@ pub const MAGIC_VDRIVE: &[u8; 8] = b"PVDRIV01";
 
 /// Default size for virtual drives (64 MB)
 pub const DEFAULT_DRIVE_SIZE_MB: u32 = 64;
+
+/// Maximum allowed size for a single file in the archive (100 MB)
+/// This prevents memory exhaustion from maliciously crafted archives.
+const MAX_SINGLE_FILE_SIZE: usize = 100 * 1024 * 1024;
+
+/// Maximum allowed total size for all files in an archive (1 GB)
+const MAX_TOTAL_ARCHIVE_SIZE: usize = 1024 * 1024 * 1024;
+
+/// Maximum allowed path length (4 KB)
+const MAX_PATH_LENGTH: usize = 4096;
 
 /// Error type for virtual drive operations
 #[derive(Debug)]
@@ -1166,9 +1196,11 @@ fn is_safe_path_str(path: &str) -> bool {
 
 /// Extract archived content to a mount point.
 /// Paths containing traversal sequences (`..`) are skipped for security.
+/// Files exceeding size limits are skipped to prevent resource exhaustion.
 #[cfg_attr(target_os = "windows", allow(dead_code))]
 fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), VirtualDriveError> {
     let mut offset = 0;
+    let mut total_size: usize = 0;
 
     while offset + 4 <= data.len() {
         let name_len = u32::from_be_bytes([
@@ -1178,6 +1210,11 @@ fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), Virtua
             data[offset + 3],
         ]) as usize;
         offset += 4;
+
+        // Security: reject excessively long path names
+        if name_len > MAX_PATH_LENGTH {
+            break;
+        }
 
         if offset + name_len > data.len() {
             break;
@@ -1226,6 +1263,17 @@ fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), Virtua
             // It's a directory
             std::fs::create_dir_all(&full_path)?;
         } else {
+            // Security: reject files that are too large
+            if content_len > MAX_SINGLE_FILE_SIZE {
+                offset += content_len;
+                continue;
+            }
+
+            // Security: reject if total would exceed limit
+            if total_size.saturating_add(content_len) > MAX_TOTAL_ARCHIVE_SIZE {
+                break;
+            }
+
             if offset + content_len > data.len() {
                 break;
             }
@@ -1234,6 +1282,7 @@ fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), Virtua
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&full_path, content)?;
+            total_size += content_len;
             offset += content_len;
         }
     }
