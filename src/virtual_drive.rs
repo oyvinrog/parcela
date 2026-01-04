@@ -1290,8 +1290,35 @@ fn extract_content_to_mount(data: &[u8], mount_path: &Path) -> Result<(), Virtua
     Ok(())
 }
 
-/// Securely remove directory contents by overwriting files before deletion
-/// Note: Used on non-Windows platforms for tmpfs cleanup
+/// Securely remove directory contents by overwriting files with zeros before deletion.
+///
+/// # Security Considerations
+///
+/// This function attempts to securely erase data by overwriting file contents with zeros
+/// before deletion. However, there are important limitations:
+///
+/// ## Effective Protection
+/// - **RAM-backed filesystems (tmpfs)**: On Linux/macOS, virtual drives use tmpfs which
+///   stores data in RAM. The overwrite ensures data is cleared from memory.
+/// - **Traditional HDDs**: Single-pass zero overwrite generally prevents recovery.
+///
+/// ## Limitations (data may still be recoverable)
+/// - **SSDs with wear-leveling**: SSDs may keep old data in spare blocks. The overwrite
+///   may write to a new physical location while old data persists.
+/// - **Copy-on-write filesystems (ZFS, Btrfs)**: Overwrites may create new copies rather
+///   than modifying in-place.
+/// - **RAID arrays**: Some RAID configurations may retain copies of overwritten data.
+/// - **Filesystem journaling**: Journal entries may contain fragments of sensitive data.
+///
+/// ## Recommendations for High-Security Scenarios
+/// For maximum security when protecting highly sensitive data:
+/// 1. Use full-disk encryption on the underlying storage
+/// 2. Consider hardware-based secure erase (ATA Secure Erase for SSDs)
+/// 3. Use encrypted memory (where hardware supports it)
+/// 4. Physically destroy storage media for critical data
+///
+/// For most threat models, the combination of encryption + RAM-backed storage + this
+/// overwrite provides adequate protection against casual recovery attempts.
 #[allow(dead_code)]
 fn secure_remove_dir_contents(path: &Path) -> Result<(), VirtualDriveError> {
     if !path.exists() {
