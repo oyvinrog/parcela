@@ -141,7 +141,17 @@ pub fn decrypt(blob: &[u8], password: &str) -> Result<Vec<u8>, ParcelaError> {
     let magic = &blob[..8];
 
     // Handle legacy PARCELA1 format (SHA-256 key derivation)
+    // WARNING: This format uses weak key derivation (SHA-256) which is vulnerable
+    // to GPU-accelerated brute force attacks. Consider re-encrypting with the
+    // current PARCELA2 format using Argon2id.
     if magic == MAGIC_BLOB_V1 {
+        // Emit deprecation warning to stderr
+        eprintln!(
+            "WARNING: Decrypting legacy PARCELA1 format file. \
+             This format uses weak SHA-256 key derivation. \
+             Consider re-encrypting with the current format for better security."
+        );
+
         if blob.len() < 8 + 12 {
             return Err(ParcelaError::InvalidFormat("blob too small"));
         }
@@ -288,7 +298,16 @@ pub fn decode_share(data: &[u8]) -> Result<Share, ParcelaError> {
     let magic = &data[..8];
 
     // Handle legacy PSHARE01 format (no checksum)
+    // WARNING: This format lacks integrity verification. Consider re-splitting
+    // with the current PSHARE02 format to detect corruption.
     if magic == MAGIC_SHARE {
+        // Emit deprecation warning to stderr
+        eprintln!(
+            "WARNING: Reading legacy PSHARE01 format share. \
+             This format lacks integrity verification. \
+             Consider re-creating shares with the current format."
+        );
+
         let index = data[8];
         let total = data[9];
         let threshold = data[10];
