@@ -633,18 +633,59 @@ fn vdrive_import_file(drive_id: String, dest_path: String) -> Result<String, Str
     Ok(full_dest)
 }
 
-/// Delete multiple files from the filesystem
+/// Check if a path string is safe (no traversal sequences or null bytes)
+fn is_safe_path(path: &str) -> bool {
+    // Check for path traversal attempts
+    if path.contains("..") {
+        return false;
+    }
+    // Check for null bytes (could be used to truncate paths)
+    if path.contains('\0') {
+        return false;
+    }
+    true
+}
+
+/// Delete multiple files from the filesystem.
+/// Only allows deletion of Parcela share files (.share1, .share2, .share3) for security.
 #[tauri::command]
 fn delete_files(paths: Vec<String>) -> Result<(), String> {
-    for path in paths {
-        if path.is_empty() {
+    for path_str in paths {
+        if path_str.is_empty() {
             continue;
         }
-        let path = std::path::Path::new(&path);
+
+        // Security: reject paths with traversal sequences
+        if !is_safe_path(&path_str) {
+            return Err(format!(
+                "Refusing to delete path with traversal sequence: {}",
+                path_str
+            ));
+        }
+
+        let path = std::path::Path::new(&path_str);
+
+        // Security: only allow deletion of Parcela share files
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let is_share_file = filename.ends_with(".share1")
+            || filename.ends_with(".share2")
+            || filename.ends_with(".share3");
+
+        if !is_share_file {
+            return Err(format!(
+                "Refusing to delete non-share file: {}. Only .share1, .share2, .share3 files can be deleted.",
+                path.display()
+            ));
+        }
+
         // Skip non-existent paths silently
         if !path.exists() {
             continue;
         }
+
         // Verify the path is a regular file before attempting deletion
         let metadata = std::fs::metadata(path)
             .map_err(|e| format!("Failed to read metadata for {}: {}", path.display(), e))?;
@@ -654,6 +695,7 @@ fn delete_files(paths: Vec<String>) -> Result<(), String> {
                 path.display()
             ));
         }
+
         std::fs::remove_file(path)
             .map_err(|e| format!("Failed to delete {}: {}", path.display(), e))?;
     }
