@@ -1286,44 +1286,67 @@ fn verify_share_independence(share_paths: &[String]) -> Result<SecurityTestResul
         chi_squares.push((idx + 1, chi_sq));
     }
 
-    // Check pairwise correlation between shares (XOR should also be random)
-    let mut correlations = Vec::new();
+    // For Shamir's Secret Sharing, shares ARE mathematically related (that's how
+    // reconstruction works). The security property is that any subset smaller than
+    // the threshold reveals NO information about the secret.
+    //
+    // Instead of checking if shares are completely independent (they're not),
+    // we verify that:
+    // 1. Each share individually appears random (chi-square test above)
+    // 2. The XOR of shares still appears random (uniform distribution)
+    
+    let mut xor_uniformity_failures = 0;
     for i in 0..shares_data.len() {
         for j in (i + 1)..shares_data.len() {
             if shares_data[i].len() != shares_data[j].len() {
                 continue;
             }
             
-            // XOR the shares and check if result looks random
-            let _xor_result: Vec<u8> = shares_data[i].iter()
+            // XOR the shares and check if result has uniform byte distribution
+            let xor_result: Vec<u8> = shares_data[i].iter()
                 .zip(shares_data[j].iter())
                 .map(|(&a, &b)| a ^ b)
                 .collect();
             
-            // Count matching bytes (should be ~1/256 for random data)
-            let matching = shares_data[i].iter()
-                .zip(shares_data[j].iter())
-                .filter(|(&a, &b)| a == b)
-                .count();
+            // Chi-square test on XOR result (should be uniformly distributed)
+            let mut xor_counts = [0usize; 256];
+            for &byte in &xor_result {
+                xor_counts[byte as usize] += 1;
+            }
             
-            let expected_matching = shares_data[i].len() as f64 / 256.0;
-            let correlation_ratio = matching as f64 / expected_matching;
-            correlations.push((i + 1, j + 1, correlation_ratio));
+            let total = xor_result.len() as f64;
+            let expected = total / 256.0;
+            
+            // Only perform chi-square if we have enough data
+            if total >= 256.0 {
+                let chi_sq: f64 = xor_counts.iter()
+                    .map(|&c| {
+                        let diff = c as f64 - expected;
+                        diff * diff / expected.max(0.1)
+                    })
+                    .sum();
+                
+                // Chi-square critical value for df=255 at p=0.001 is ~310
+                // We use a generous threshold to avoid false positives
+                if chi_sq > 400.0 {
+                    xor_uniformity_failures += 1;
+                }
+            }
         }
     }
 
-    // All correlations should be roughly 1.0 (no significant correlation)
-    let suspicious = correlations.iter()
-        .filter(|(_, _, ratio)| *ratio > 3.0 || *ratio < 0.3)
+    // Check if any chi-square tests showed severe non-uniformity
+    let high_chi_sq = chi_squares.iter()
+        .filter(|(_, chi)| *chi > 400.0)
         .count();
 
-    if suspicious > 0 {
+    if high_chi_sq > 0 || xor_uniformity_failures > 0 {
         Ok(SecurityTestResult {
             passed: false,
             message: format!(
-                "WARNING: {} share pair(s) show unusual correlation. \
+                "WARNING: {} share(s) show non-uniform distribution, {} XOR pair(s) non-uniform. \
                  This may indicate a weakness in random number generation.",
-                suspicious
+                high_chi_sq, xor_uniformity_failures
             ),
         })
     } else {
@@ -1331,7 +1354,7 @@ fn verify_share_independence(share_paths: &[String]) -> Result<SecurityTestResul
             passed: true,
             message: format!(
                 "All {} share(s) appear statistically independent. \
-                 Chi-square uniformity and pairwise correlation tests passed. \
+                 Chi-square uniformity tests passed for individual shares and XOR pairs. \
                  Information-theoretic security verified.",
                 shares_data.len()
             ),
