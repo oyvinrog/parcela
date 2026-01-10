@@ -5,6 +5,7 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+pub mod security_verification;
 pub mod stego;
 pub mod virtual_drive;
 
