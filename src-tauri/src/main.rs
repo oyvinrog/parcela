@@ -292,7 +292,8 @@ async fn combine_shares(
         let mut shares = Vec::with_capacity(share_paths.len());
         for path in share_paths {
             let data = std::fs::read(&path).map_err(|e| e.to_string())?;
-            let share = parcela::decode_share(&data).map_err(|e| e.to_string())?;
+            // Use universal decoder to handle both image and legacy share formats
+            let share = parcela::decode_share_universal(&data).map_err(|e| e.to_string())?;
             shares.push(share);
         }
 
@@ -444,11 +445,14 @@ async fn create_virtual_drive(
         std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
         let base_name = format!("{}.vdrive", name.replace(['/', '\\', ':'], "_"));
 
+        // Use a seed based on drive name for consistent image selection
+        let seed: u64 = base_name.bytes().fold(0u64, |acc, b| acc.wrapping_add(b as u64).wrapping_mul(31));
+
         let mut share_paths: [Option<String>; 3] = [None, None, None];
         for share in shares.iter() {
-            let filename = format!("{}.share{}", base_name, share.index);
+            let filename = format!("{}.share{}.png", base_name, share.index);
             let path = std::path::PathBuf::from(&out_dir).join(filename);
-            let data = parcela::encode_share(share);
+            let data = parcela::encode_share_as_image(share, Some(seed)).map_err(|e| e.to_string())?;
             std::fs::write(&path, data).map_err(|e| e.to_string())?;
             share_paths[(share.index - 1) as usize] = Some(path.to_string_lossy().to_string());
         }
@@ -477,14 +481,15 @@ async fn unlock_virtual_drive(
 
     // Do the heavy crypto work in a blocking thread
     let (drive, drive_id, drive_name) = tauri::async_runtime::spawn_blocking(move || {
-        // Read and decode shares
+        // Read and decode shares (supports both image and legacy formats)
         let mut shares = Vec::with_capacity(share_paths.len());
         for path in &share_paths {
             let data = std::fs::read(path).map_err(|e| e.to_string())?;
             if data.len() < 15 {
                 continue;
             }
-            let share = parcela::decode_share(&data).map_err(|e| e.to_string())?;
+            // Use universal decoder to handle both image and legacy share formats
+            let share = parcela::decode_share_universal(&data).map_err(|e| e.to_string())?;
             shares.push(share);
         }
 
@@ -604,10 +609,21 @@ async fn lock_virtual_drive(
             };
 
             // Save to the existing share locations
+            // Detect if we should use image or legacy format based on existing file extension
             for share in shares.iter() {
                 let idx = (share.index - 1) as usize;
                 if let Some(path) = &share_paths[idx] {
-                    let data = parcela::encode_share(share);
+                    // Use image format if path ends with .png, otherwise use legacy
+                    let data = if path.ends_with(".png") {
+                        // Generate seed from path for consistent image selection
+                        let seed: u64 = path.bytes().fold(0u64, |acc, b| acc.wrapping_add(b as u64).wrapping_mul(31));
+                        match parcela::encode_share_as_image(share, Some(seed)) {
+                            Ok(d) => d,
+                            Err(e) => return Err((state, e.to_string())),
+                        }
+                    } else {
+                        parcela::encode_share(share)
+                    };
                     if let Err(e) = std::fs::write(path, &data) {
                         return Err((state, e.to_string()));
                     }

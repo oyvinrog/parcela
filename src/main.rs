@@ -3,7 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use parcela::{
-    combine_shares, decode_share, decrypt, encode_share, encrypt, split_shares, Share,
+    combine_shares, decrypt, encode_share, encrypt, split_shares, Share,
+    stego::{encode_share_as_image, decode_share_universal, detect_share_format},
 };
 
 #[derive(Parser)]
@@ -22,6 +23,12 @@ enum Command {
         out_dir: PathBuf,
         #[arg(long)]
         password: String,
+        /// Generate shares as PNG images with embedded steganographic data
+        #[arg(long, default_value = "true")]
+        image: bool,
+        /// Use legacy binary format instead of image format
+        #[arg(long)]
+        legacy: bool,
     },
     Combine {
         #[arg(long, required = true, num_args = 2..=3)]
@@ -41,7 +48,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             input,
             out_dir,
             password,
-        } => split_cmd(&input, &out_dir, &password)?,
+            image,
+            legacy,
+        } => {
+            let use_image = image && !legacy;
+            split_cmd(&input, &out_dir, &password, use_image)?
+        }
         Command::Combine {
             shares,
             output,
@@ -52,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn split_cmd(input: &Path, out_dir: &Path, password: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn split_cmd(input: &Path, out_dir: &Path, password: &str, use_image: bool) -> Result<(), Box<dyn std::error::Error>> {
     let plaintext = fs::read(input)?;
     let encrypted = encrypt(&plaintext, password)?;
     let shares = split_shares(&encrypted)?;
@@ -63,11 +75,23 @@ fn split_cmd(input: &Path, out_dir: &Path, password: &str) -> Result<(), Box<dyn
         .and_then(|n| n.to_str())
         .unwrap_or("file");
 
+    // Use a seed based on the input filename for consistent image selection
+    let seed: u64 = base_name.bytes().fold(0u64, |acc, b| acc.wrapping_add(b as u64).wrapping_mul(31));
+
     for share in shares.iter() {
-        let filename = format!("{base_name}.share{}", share.index);
-        let path = out_dir.join(filename);
-        let data = encode_share(share);
-        fs::write(path, data)?;
+        if use_image {
+            // Generate share as PNG image with embedded steganographic data
+            let filename = format!("{base_name}.share{}.png", share.index);
+            let path = out_dir.join(filename);
+            let data = encode_share_as_image(share, Some(seed))?;
+            fs::write(path, data)?;
+        } else {
+            // Generate legacy binary share
+            let filename = format!("{base_name}.share{}", share.index);
+            let path = out_dir.join(filename);
+            let data = encode_share(share);
+            fs::write(path, data)?;
+        }
     }
 
     Ok(())
@@ -81,7 +105,10 @@ fn combine_cmd(
     let mut shares: Vec<Share> = Vec::with_capacity(share_paths.len());
     for path in share_paths {
         let data = fs::read(path)?;
-        let share = decode_share(&data)?;
+        // Use universal decoder that handles stego images, v2, and legacy v1 formats
+        let format = detect_share_format(&data).unwrap_or("unknown");
+        eprintln!("Reading share from {:?} (format: {})", path.file_name().unwrap_or_default(), format);
+        let share = decode_share_universal(&data)?;
         shares.push(share);
     }
 
@@ -118,7 +145,8 @@ mod tests {
         let content = b"tauri roundtrip";
         fs::write(&input, content).expect("write input");
 
-        split_cmd(&input, &out_dir, "pass").expect("split");
+        // Test with legacy format (non-image)
+        split_cmd(&input, &out_dir, "pass", false).expect("split");
 
         let share1 = out_dir.join("note.txt.share1");
         let share3 = out_dir.join("note.txt.share3");
@@ -138,7 +166,7 @@ mod tests {
         let output = dir.join("recovered.txt");
         fs::write(&input, b"data").expect("write input");
 
-        split_cmd(&input, &out_dir, "pass").expect("split");
+        split_cmd(&input, &out_dir, "pass", false).expect("split");
         let share1 = out_dir.join("note.txt.share1");
 
         let err = combine_cmd(&[share1], &output, "pass").unwrap_err();
@@ -272,5 +300,108 @@ mod tests {
         let result = parcela::combine_shares(&[shares[0].clone()]);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("at least two shares"));
+    }
+
+    #[test]
+    fn split_then_combine_image_shares() {
+        let dir = temp_dir("image-shares");
+        let input = dir.join("secret.txt");
+        let out_dir = dir.join("shares");
+        let output = dir.join("recovered.txt");
+        let content = b"steganography test content";
+        fs::write(&input, content).expect("write input");
+
+        // Split with image shares (default behavior)
+        split_cmd(&input, &out_dir, "testpass", true).expect("split");
+
+        // Verify PNG files were created
+        let share1 = out_dir.join("secret.txt.share1.png");
+        let share2 = out_dir.join("secret.txt.share2.png");
+        let share3 = out_dir.join("secret.txt.share3.png");
+        assert!(share1.exists(), "share1.png should exist");
+        assert!(share2.exists(), "share2.png should exist");
+        assert!(share3.exists(), "share3.png should exist");
+
+        // Verify files start with PNG signature
+        let data1 = fs::read(&share1).expect("read share1");
+        assert_eq!(&data1[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A], "should be valid PNG");
+
+        // Combine any two image shares
+        combine_cmd(&[share1, share3], &output, "testpass").expect("combine");
+        let recovered = fs::read(&output).expect("read output");
+        assert_eq!(recovered, content);
+    }
+
+    #[test]
+    fn backward_compat_reads_legacy_and_image() {
+        // Test backward compatibility: verify we can read both legacy and image shares
+        let dir = temp_dir("compat-shares");
+        let input = dir.join("compat.txt");
+        let content = b"backward compatibility test";
+        fs::write(&input, content).expect("write input");
+
+        // Create legacy shares
+        let legacy_dir = dir.join("legacy");
+        split_cmd(&input, &legacy_dir, "compatpass", false).expect("split legacy");
+        
+        // Combine legacy shares
+        let legacy_share1 = legacy_dir.join("compat.txt.share1");
+        let legacy_share2 = legacy_dir.join("compat.txt.share2");
+        let legacy_output = dir.join("recovered_legacy.txt");
+        combine_cmd(&[legacy_share1.clone(), legacy_share2], &legacy_output, "compatpass").expect("combine legacy");
+        let recovered_legacy = fs::read(&legacy_output).expect("read legacy output");
+        assert_eq!(recovered_legacy, content, "legacy shares should recover content");
+
+        // Create image shares
+        let image_dir = dir.join("image");
+        split_cmd(&input, &image_dir, "compatpass", true).expect("split image");
+        
+        // Combine image shares  
+        let image_share1 = image_dir.join("compat.txt.share1.png");
+        let image_share2 = image_dir.join("compat.txt.share2.png");
+        let image_output = dir.join("recovered_image.txt");
+        combine_cmd(&[image_share1, image_share2], &image_output, "compatpass").expect("combine image");
+        let recovered_image = fs::read(&image_output).expect("read image output");
+        assert_eq!(recovered_image, content, "image shares should recover content");
+    }
+
+    #[test]
+    fn stego_share_is_valid_png() {
+        use parcela::stego;
+
+        let share = parcela::Share {
+            index: 1,
+            payload: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        };
+
+        let png_data = stego::encode_share_as_image(&share, None).expect("encode");
+        
+        // Verify PNG signature
+        assert_eq!(&png_data[..8], &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        
+        // Verify we can decode it back
+        let decoded = stego::decode_share_from_image(&png_data).expect("decode");
+        assert_eq!(decoded.index, share.index);
+        assert_eq!(decoded.payload, share.payload);
+    }
+
+    #[test]
+    fn detect_share_formats() {
+        use parcela::stego;
+
+        // Test stego format detection
+        let share = parcela::Share {
+            index: 1,
+            payload: vec![10, 20, 30],
+        };
+        
+        let stego_data = stego::encode_share_as_image(&share, None).expect("encode stego");
+        assert_eq!(stego::detect_share_format(&stego_data), Some("stego"));
+        
+        let legacy_data = parcela::encode_share(&share);
+        assert_eq!(stego::detect_share_format(&legacy_data), Some("v2"));
+        
+        // Random data should be unrecognized
+        assert_eq!(stego::detect_share_format(b"random data"), None);
     }
 }

@@ -5,6 +5,7 @@ use rand::RngCore;
 use sha2::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+pub mod stego;
 pub mod virtual_drive;
 
 #[cfg(target_os = "windows")]
@@ -16,6 +17,11 @@ pub use virtual_drive::{
     uses_memory_mode, vdrive_create_dir, vdrive_delete_file, vdrive_list_files,
     vdrive_read_file, vdrive_write_file,
     MAGIC_VDRIVE, DEFAULT_DRIVE_SIZE_MB,
+};
+
+pub use stego::{
+    encode_share_as_image, decode_share_from_image, decode_share_universal,
+    detect_share_format, get_image_names, MAGIC_STEGO,
 };
 
 #[cfg(target_os = "windows")]
