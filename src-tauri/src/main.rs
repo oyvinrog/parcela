@@ -1123,18 +1123,18 @@ fn verify_bruteforce_resistance(vault_path: &str, password: &str) -> Result<Secu
     let num_gpus = 1000.0;
     let total_attempts_per_sec = attempts_per_sec_per_gpu * num_gpus;
 
-    // Common password space sizes
-    let password_spaces = [
-        ("4-digit PIN", 10_000u64),
-        ("6-char lowercase", 26u64.pow(6)),
-        ("8-char mixed case", 52u64.pow(8)),
-        ("8-char alphanumeric", 62u64.pow(8)),
-        ("12-char alphanumeric", 62u64.pow(12)),
+    // Common password space sizes (use f64 to avoid overflow for large spaces)
+    let password_spaces: [(&str, f64); 5] = [
+        ("4-digit PIN", 10_000.0),
+        ("6-char lowercase", 26.0_f64.powf(6.0)),
+        ("8-char mixed case", 52.0_f64.powf(8.0)),
+        ("8-char alphanumeric", 62.0_f64.powf(8.0)),
+        ("12-char alphanumeric", 62.0_f64.powf(12.0)),
     ];
 
     let mut estimates = Vec::new();
     for (name, space) in password_spaces.iter() {
-        let seconds = *space as f64 / total_attempts_per_sec;
+        let seconds = *space / total_attempts_per_sec;
         let time_str = if seconds < 60.0 {
             format!("{:.1} seconds", seconds)
         } else if seconds < 3600.0 {
