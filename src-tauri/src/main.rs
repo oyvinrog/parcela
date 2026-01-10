@@ -886,7 +886,7 @@ fn is_safe_path(path: &str) -> bool {
 }
 
 /// Delete multiple files from the filesystem.
-/// Only allows deletion of Parcela share files (.share1, .share2, .share3) for security.
+/// Only allows deletion of files that contain valid Parcela share data for security.
 #[tauri::command]
 fn delete_files(paths: Vec<String>) -> Result<(), String> {
     for path_str in paths {
@@ -904,22 +904,6 @@ fn delete_files(paths: Vec<String>) -> Result<(), String> {
 
         let path = std::path::Path::new(&path_str);
 
-        // Security: only allow deletion of Parcela share files
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("");
-        let is_share_file = filename.ends_with(".share1")
-            || filename.ends_with(".share2")
-            || filename.ends_with(".share3");
-
-        if !is_share_file {
-            return Err(format!(
-                "Refusing to delete non-share file: {}. Only .share1, .share2, .share3 files can be deleted.",
-                path.display()
-            ));
-        }
-
         // Skip non-existent paths silently
         if !path.exists() {
             continue;
@@ -931,6 +915,17 @@ fn delete_files(paths: Vec<String>) -> Result<(), String> {
         if !metadata.is_file() {
             return Err(format!(
                 "Refusing to delete non-file path: {}",
+                path.display()
+            ));
+        }
+
+        // Security: verify the file contains a valid Parcela share before allowing deletion
+        let data = std::fs::read(path)
+            .map_err(|e| format!("Failed to read file for verification: {}: {}", path.display(), e))?;
+        
+        if parcela::decode_share_universal(&data).is_err() {
+            return Err(format!(
+                "Refusing to delete '{}': file does not contain valid Parcela share data.",
                 path.display()
             ));
         }
