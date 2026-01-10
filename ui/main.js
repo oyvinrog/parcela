@@ -83,7 +83,6 @@ const securitySummaryTextEl = document.getElementById("security-summary-text");
 const securityRunTestsBtn = document.getElementById("security-run-tests");
 const securityDialogCloseBtn = document.getElementById("security-dialog-close");
 const securityDialogDismissBtn = document.getElementById("security-dialog-dismiss");
-const verifySecurityBtn = document.getElementById("verify-security");
 const securityVaultNameEl = document.getElementById("security-vault-name");
 const securityVaultPathEl = document.getElementById("security-vault-path");
 const securityLastCheckEl = document.getElementById("security-last-check");
@@ -483,6 +482,13 @@ function renderFileList() {
     const title = document.createElement("div");
     title.className = "file-title";
     title.textContent = drive.name;
+    title.title = drive.name; // Tooltip for truncated names
+
+    info.appendChild(icon);
+    info.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "file-meta";
 
     const sizeTag = document.createElement("span");
     sizeTag.className = "size-tag";
@@ -507,14 +513,6 @@ function renderFileList() {
       securityIndicator.title = "Not yet verified";
     }
 
-    info.appendChild(icon);
-    info.appendChild(title);
-    info.appendChild(sizeTag);
-    info.appendChild(securityIndicator);
-
-    const meta = document.createElement("div");
-    meta.className = "file-meta";
-
     const lights = document.createElement("div");
     lights.className = "lights-inline";
 
@@ -530,8 +528,27 @@ function renderFileList() {
     const availableCount = drive.available.filter(Boolean).length;
     count.textContent = `${availableCount}/3`;
 
+    meta.appendChild(sizeTag);
+    meta.appendChild(securityIndicator);
     meta.appendChild(lights);
     meta.appendChild(count);
+
+    // Verify security button for this drive
+    const verifyBtn = document.createElement("button");
+    verifyBtn.type = "button";
+    verifyBtn.className = "drive-verify-btn";
+    verifyBtn.textContent = "🔐";
+    verifyBtn.title = "Verify security";
+    verifyBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      // Select this drive first, then show security dialog
+      state.selectedFileId = drive.id;
+      state.selectedType = "drive";
+      renderDetail();
+      renderFileList();
+      showSecurityDialog();
+    });
+    meta.appendChild(verifyBtn);
 
     // Delete button
     const deleteBtn = document.createElement("button");
@@ -587,6 +604,7 @@ function renderFileList() {
     const title = document.createElement("div");
     title.className = "file-title";
     title.textContent = file.name;
+    title.title = file.name; // Tooltip for truncated names
 
     info.appendChild(checkbox);
     info.appendChild(title);
@@ -1661,7 +1679,6 @@ document.getElementById("open-vault").addEventListener("click", handleOpenVault)
 document.getElementById("create-vault").addEventListener("click", handleCreateVault);
 
 document.getElementById("add-virtual-drive").addEventListener("click", handleCreateVirtualDrive);
-document.getElementById("refresh-status").addEventListener("click", handleRefreshStatus);
 selectAllEl.addEventListener("change", () => {
   if (selectAllEl.checked) {
     setSelectedFiles(state.vault.files.map((file) => file.id));
@@ -2060,16 +2077,7 @@ async function runSecurityTests() {
   securityRunTestsBtn.textContent = "Run Security Tests";
 }
 
-// Security dialog event listeners
-if (verifySecurityBtn) {
-  verifySecurityBtn.addEventListener("click", () => {
-    if (!state.vaultPath) {
-      setStatus("Open a vault first to verify security.", "error");
-      return;
-    }
-    showSecurityDialog();
-  });
-}
+// Security dialog event listeners (verify button removed from top, now on each drive)
 
 if (securityDialogCloseBtn) {
   securityDialogCloseBtn.addEventListener("click", hideSecurityDialog);

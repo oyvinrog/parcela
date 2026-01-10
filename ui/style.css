@@ -215,7 +215,7 @@ button.secondary:hover {
 
 .vault-screen {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: minmax(320px, 380px) 1fr;
   gap: 24px;
   animation: fade-in 0.4s ease;
 }
@@ -228,7 +228,9 @@ button.secondary:hover {
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
+  max-height: calc(100vh - 120px);
+  overflow: hidden;
 }
 
 .vault-meta {
@@ -307,12 +309,12 @@ button.secondary:hover {
 
 .vault-actions {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .selection-controls {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .select-all {
@@ -330,36 +332,63 @@ button.secondary:hover {
 }
 
 .file-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   overflow-y: auto;
-  max-height: 460px;
+  flex: 1;
+  min-height: 0;
   padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-border) transparent;
+}
+
+/* Webkit scrollbar styling */
+.file-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.file-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.file-list::-webkit-scrollbar-thumb {
+  background: var(--panel-border);
+  border-radius: 3px;
+}
+
+.file-list::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
 }
 
 .file-item {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 36px 12px 14px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 14px 40px 14px 16px;
   border-radius: 14px;
   border: 1px solid transparent;
   background: #fff;
   cursor: pointer;
   transition: 0.2s ease;
+  flex-shrink: 0;
+  min-width: 0;
 }
 
 .file-info {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .file-select {
   width: 16px;
   height: 16px;
   accent-color: var(--accent);
+  flex-shrink: 0;
 }
 
 .file-item:hover {
@@ -414,9 +443,8 @@ button.secondary:hover {
 
 .file-delete-btn {
   position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
+  right: 10px;
+  top: 14px;
   width: 24px;
   height: 24px;
   padding: 0;
@@ -443,12 +471,13 @@ button.secondary:hover {
 .file-delete-btn:hover {
   background: var(--red);
   color: #fff;
-  transform: translateY(-50%) scale(1.1);
+  transform: scale(1.1);
 }
 
 .drive-icon {
   font-size: 16px;
   margin-right: 4px;
+  flex-shrink: 0;
 }
 
 .size-tag {
@@ -458,19 +487,27 @@ button.secondary:hover {
   color: #5a9fd4;
   border-radius: 4px;
   margin-left: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .file-title {
   font-weight: 600;
   font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
 .file-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--muted);
   font-size: 12px;
+  flex-wrap: wrap;
 }
 
 .detail {
@@ -1373,16 +1410,19 @@ input:focus {
   font-weight: 600;
 }
 
-/* Security verify button in sidebar */
-.security-btn {
+/* Verify security button on each drive item */
+.drive-verify-btn {
+  padding: 4px 8px;
+  font-size: 12px;
   background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
   color: #fff;
   border: none;
-  transition: all 0.2s ease;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
 }
 
-.security-btn:hover {
+.drive-verify-btn:hover {
   background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-}
+  transform: scale(1.05);
