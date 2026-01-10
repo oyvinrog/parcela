@@ -247,6 +247,64 @@ button.secondary:hover {
   word-break: break-word;
 }
 
+.vault-security-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.vault-security-badge:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.vault-security-badge.verified {
+  background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+  color: #1d6b44;
+  border: 1px solid rgba(59, 178, 115, 0.3);
+}
+
+.vault-security-badge.failed {
+  background: linear-gradient(135deg, #ffebee 0%, #ffcdd2 100%);
+  color: #8b3244;
+  border: 1px solid rgba(232, 93, 117, 0.4);
+  animation: pulse-warning 2s ease-in-out infinite;
+}
+
+.vault-security-badge.unverified {
+  background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%);
+  color: #8b6f00;
+  border: 1px solid rgba(242, 193, 78, 0.4);
+}
+
+.vault-security-badge.no-drive {
+  background: linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%);
+  color: #757575;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+@keyframes pulse-warning {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(232, 93, 117, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(232, 93, 117, 0); }
+}
+
+.vault-security-badge .badge-icon {
+  font-size: 12px;
+}
+
+.vault-security-badge .badge-text {
+  white-space: nowrap;
+}
+
 .vault-actions {
   display: grid;
   gap: 10px;
@@ -322,6 +380,36 @@ button.secondary:hover {
 .file-item.drive-item.unlocked {
   border-left-color: var(--green);
   background: linear-gradient(135deg, #fff 0%, #f0fff4 100%);
+}
+
+/* Drive security indicator in file list */
+.drive-security-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.drive-security-indicator.verified {
+  background: var(--green);
+  color: #fff;
+}
+
+.drive-security-indicator.failed {
+  background: var(--red);
+  color: #fff;
+  animation: pulse-warning 2s ease-in-out infinite;
+}
+
+.drive-security-indicator.unverified {
+  background: var(--amber);
+  color: #fff;
 }
 
 .file-delete-btn {
@@ -981,4 +1069,320 @@ input:focus {
   .login-actions {
     flex-direction: column;
   }
+}
+
+/* =============================================================================
+   Security Verification Dialog
+   ============================================================================= */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(27, 22, 20, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: overlay-fade-in 0.3s ease;
+}
+
+.modal-overlay.hidden {
+  display: none;
+}
+
+.security-dialog {
+  background: var(--panel);
+  border-radius: 24px;
+  padding: 32px;
+  width: min(560px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--panel-border);
+  animation: loading-card-in 0.4s ease;
+}
+
+.security-dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.security-dialog-header h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.dialog-close {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.05);
+  font-size: 24px;
+  font-weight: 300;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.dialog-close:hover {
+  background: var(--red);
+  color: #fff;
+}
+
+.security-vault-info {
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #f8f4f0 0%, #f0ebe4 100%);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  margin-bottom: 16px;
+}
+
+.security-vault-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+
+.security-vault-path {
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-all;
+  font-family: "Fira Code", "Consolas", monospace;
+}
+
+.security-last-check {
+  padding: 12px 16px;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.security-last-check.hidden {
+  display: none;
+}
+
+.security-last-check.pass {
+  background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+  border: 1px solid rgba(59, 178, 115, 0.3);
+}
+
+.security-last-check.fail {
+  background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%);
+  border: 1px solid rgba(232, 93, 117, 0.4);
+}
+
+.security-last-check.never {
+  background: linear-gradient(135deg, #fff8e1 0%, #fff3e0 100%);
+  border: 1px solid rgba(242, 193, 78, 0.4);
+}
+
+.security-last-check-content {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.security-last-check.pass .security-last-check-content {
+  color: #1d6b44;
+}
+
+.security-last-check.fail .security-last-check-content {
+  color: #8b3244;
+}
+
+.security-last-check.never .security-last-check-content {
+  color: #8b6f00;
+}
+
+.security-dialog-desc {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 0 24px;
+  line-height: 1.5;
+}
+
+.security-tests {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.security-test {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 14px;
+  background: #fff;
+  border: 1px solid var(--panel-border);
+  transition: all 0.2s ease;
+}
+
+.security-test.running {
+  border-color: rgba(228, 106, 46, 0.5);
+  box-shadow: 0 4px 16px rgba(228, 106, 46, 0.1);
+}
+
+.security-test.pass {
+  border-color: rgba(59, 178, 115, 0.5);
+  background: linear-gradient(135deg, #fff 0%, #f0fff4 100%);
+}
+
+.security-test.fail {
+  border-color: rgba(232, 93, 117, 0.5);
+  background: linear-gradient(135deg, #fff 0%, #fff5f5 100%);
+}
+
+.security-test-indicator {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.security-test.pending .security-test-indicator {
+  background: var(--panel-strong);
+  color: var(--muted);
+}
+
+.security-test.running .security-test-indicator {
+  background: var(--accent);
+  color: #fff;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.security-test.pass .security-test-indicator {
+  background: var(--green);
+  color: #fff;
+}
+
+.security-test.fail .security-test-indicator {
+  background: var(--red);
+  color: #fff;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.8; }
+}
+
+.security-test-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.security-test-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+  color: var(--ink);
+}
+
+.security-test-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.security-test-result {
+  font-size: 11px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.03);
+  font-family: "Fira Code", "Consolas", monospace;
+  color: var(--ink);
+  word-break: break-word;
+}
+
+.security-test.pass .security-test-result {
+  background: rgba(59, 178, 115, 0.1);
+  color: #1d6b44;
+}
+
+.security-test.fail .security-test-result {
+  background: rgba(232, 93, 117, 0.1);
+  color: #8b3244;
+}
+
+.security-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px;
+  border-radius: 16px;
+  margin-bottom: 24px;
+}
+
+.security-summary.hidden {
+  display: none;
+}
+
+.security-summary.pass {
+  background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+  border: 1px solid rgba(59, 178, 115, 0.3);
+}
+
+.security-summary.fail {
+  background: linear-gradient(135deg, #ffebee 0%, #fce4ec 100%);
+  border: 1px solid rgba(232, 93, 117, 0.3);
+}
+
+.security-summary-icon {
+  font-size: 36px;
+}
+
+.security-summary-text {
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.security-summary.pass .security-summary-text {
+  color: #1d6b44;
+}
+
+.security-summary.fail .security-summary-text {
+  color: #8b3244;
+}
+
+.security-dialog-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.security-dialog-actions button {
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Security verify button in sidebar */
+.security-btn {
+  background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+  color: #fff;
+  border: none;
+  transition: all 0.2s ease;
+}
+
+.security-btn:hover {
+  background: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
