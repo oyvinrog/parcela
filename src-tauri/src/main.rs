@@ -996,6 +996,9 @@ async fn run_security_test(
             "verify_nonce_uniqueness" => {
                 verify_nonce_uniqueness(&vault_path, &password)
             }
+            "verify_vault_header_sanity" => {
+                verify_vault_header_sanity(&vault_path)
+            }
             "verify_key_zeroization" => {
                 verify_key_zeroization()
             }
@@ -1409,11 +1412,48 @@ fn verify_aead_authentication(vault_path: &str, password: &str) -> Result<Securi
         }
     }
 
+    // Also test tampering with the salt
+    let mut salt_tampered = vault_data.clone();
+    if vault_data.len() > 12 {
+        salt_tampered[10] ^= 0x01;
+        if parcela::decrypt(&salt_tampered, password).is_ok() {
+            return Ok(SecurityTestResult {
+                passed: false,
+                message: "CRITICAL: Salt tampering was not detected!".to_string(),
+            });
+        }
+    }
+
+    // Also test tampering with the authentication tag (last 16 bytes)
+    if vault_data.len() > 20 {
+        let mut tag_tampered = vault_data.clone();
+        let tag_pos = vault_data.len() - 5;
+        tag_tampered[tag_pos] ^= 0x01;
+        if parcela::decrypt(&tag_tampered, password).is_ok() {
+            return Ok(SecurityTestResult {
+                passed: false,
+                message: "CRITICAL: Authentication tag tampering was not detected!".to_string(),
+            });
+        }
+    }
+
+    // Also test truncation (remove last byte)
+    if vault_data.len() > 1 {
+        let mut truncated = vault_data.clone();
+        truncated.truncate(vault_data.len() - 1);
+        if parcela::decrypt(&truncated, password).is_ok() {
+            return Ok(SecurityTestResult {
+                passed: false,
+                message: "CRITICAL: Truncated ciphertext was accepted!".to_string(),
+            });
+        }
+    }
+
     Ok(SecurityTestResult {
         passed: true,
         message: "AES-256-GCM authentication verified. \
-                 Single bit-flip in ciphertext correctly rejected. \
-                 Chosen-ciphertext attack resistance confirmed.".to_string(),
+                 Tampering in ciphertext, nonce, salt, auth tag, and truncation \
+                 all correctly rejected.".to_string(),
     })
 }
 
@@ -1479,7 +1519,70 @@ fn verify_nonce_uniqueness(vault_path: &str, password: &str) -> Result<SecurityT
     })
 }
 
-/// Test 7: Verify keys are zeroized from memory after use
+/// Test 7: Verify vault header uses modern format and sane randomness
+fn verify_vault_header_sanity(vault_path: &str) -> Result<SecurityTestResult, String> {
+    let vault_data = std::fs::read(vault_path).map_err(|e| e.to_string())?;
+
+    if vault_data.len() < 8 {
+        return Ok(SecurityTestResult {
+            passed: false,
+            message: "Vault data too small to contain magic header.".to_string(),
+        });
+    }
+
+    let magic = &vault_data[..8];
+    if magic == parcela::MAGIC_BLOB_V1 {
+        return Ok(SecurityTestResult {
+            passed: false,
+            message: "CRITICAL: Vault uses legacy PARCELA1 (SHA-256 KDF). \
+                     Re-encrypt with PARCELA2 for brute-force resistance.".to_string(),
+        });
+    }
+
+    if magic != parcela::MAGIC_BLOB {
+        return Ok(SecurityTestResult {
+            passed: false,
+            message: "Unknown vault format (bad magic header).".to_string(),
+        });
+    }
+
+    let min_len = 8 + parcela::SALT_SIZE + 12 + 16;
+    if vault_data.len() < min_len {
+        return Ok(SecurityTestResult {
+            passed: false,
+            message: "Vault data too small to contain a valid AES-GCM tag. \
+                     File may be truncated or corrupted.".to_string(),
+        });
+    }
+
+    let salt = &vault_data[8..8 + parcela::SALT_SIZE];
+    if salt.iter().all(|&b| b == 0) {
+        return Ok(SecurityTestResult {
+            passed: false,
+            message: "CRITICAL: Salt is all zeros. \
+                     RNG failure enables precomputation attacks.".to_string(),
+        });
+    }
+
+    let nonce_start = 8 + parcela::SALT_SIZE;
+    let nonce = &vault_data[nonce_start..nonce_start + 12];
+    if nonce.iter().all(|&b| b == 0) {
+        return Ok(SecurityTestResult {
+            passed: false,
+            message: "CRITICAL: Nonce is all zeros. \
+                     RNG failure enables nonce-reuse attacks.".to_string(),
+        });
+    }
+
+    Ok(SecurityTestResult {
+        passed: true,
+        message: "Vault header sanity verified. Modern PARCELA2 format in use; \
+                 salt/nonce present and non-zero; ciphertext length includes AEAD tag."
+            .to_string(),
+    })
+}
+
+/// Test 8: Verify keys are zeroized from memory after use
 fn verify_key_zeroization() -> Result<SecurityTestResult, String> {
     // This test verifies the code structure uses zeroize
     // We can't actually verify memory at runtime without unsafe code,

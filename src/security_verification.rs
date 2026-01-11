@@ -10,7 +10,7 @@
 
 use crate::{
     combine_shares, decrypt, encode_share, encrypt,
-    Share, MAGIC_BLOB,
+    Share, MAGIC_BLOB, MAGIC_BLOB_V1, SALT_SIZE,
 };
 
 /// Result of a security verification test
@@ -165,9 +165,21 @@ pub fn verify_aead_authentication(
         );
     }
 
+    // Test 5: Truncate ciphertext (remove last byte) and verify decryption fails
+    if encrypted_blob.len() > 1 {
+        let mut truncated = encrypted_blob.to_vec();
+        truncated.truncate(encrypted_blob.len() - 1);
+        if decrypt(&truncated, password).is_ok() {
+            return SecurityTestResult::fail(
+                "CRITICAL: Truncated ciphertext was accepted! \
+                 AEAD tag verification may be bypassed.",
+            );
+        }
+    }
+
     SecurityTestResult::pass(
         "AES-256-GCM authentication verified. \
-         Tampering in ciphertext, nonce, salt, and auth tag all correctly rejected.",
+         Tampering in ciphertext, nonce, salt, auth tag, and truncation all correctly rejected.",
     )
 }
 
@@ -238,6 +250,60 @@ pub fn verify_nonce_uniqueness(plaintext: &[u8], password: &str) -> SecurityTest
          Ciphertexts are semantically secure (different each encryption).",
         salt_different, nonce_different
     ))
+}
+
+/// Verify that vault header uses modern format and sane randomness.
+///
+/// This test:
+/// 1. Rejects legacy PARCELA1 format (weak SHA-256 KDF)
+/// 2. Ensures header is long enough to include an AEAD tag
+/// 3. Ensures salt and nonce are not all-zero (RNG failure indicator)
+pub fn verify_vault_header_sanity(encrypted_blob: &[u8]) -> SecurityTestResult {
+    if encrypted_blob.len() < 8 {
+        return SecurityTestResult::fail("Vault data too small to contain magic header.");
+    }
+
+    let magic = &encrypted_blob[..8];
+    if magic == MAGIC_BLOB_V1 {
+        return SecurityTestResult::fail(
+            "CRITICAL: Vault uses legacy PARCELA1 (SHA-256 KDF). \
+             This format is vulnerable to GPU brute-force. Re-encrypt with PARCELA2.",
+        );
+    }
+
+    if magic != MAGIC_BLOB {
+        return SecurityTestResult::fail("Unknown vault format (bad magic header).");
+    }
+
+    let min_len = 8 + SALT_SIZE + 12 + 16; // magic + salt + nonce + GCM tag
+    if encrypted_blob.len() < min_len {
+        return SecurityTestResult::fail(
+            "Vault data too small to contain a valid AES-GCM tag. \
+             File may be truncated or corrupted.",
+        );
+    }
+
+    let salt = &encrypted_blob[8..8 + SALT_SIZE];
+    if salt.iter().all(|&b| b == 0) {
+        return SecurityTestResult::fail(
+            "CRITICAL: Salt is all zeros. \
+             This indicates RNG failure and enables precomputation attacks.",
+        );
+    }
+
+    let nonce_start = 8 + SALT_SIZE;
+    let nonce = &encrypted_blob[nonce_start..nonce_start + 12];
+    if nonce.iter().all(|&b| b == 0) {
+        return SecurityTestResult::fail(
+            "CRITICAL: Nonce is all zeros. \
+             This indicates RNG failure and enables nonce-reuse attacks.",
+        );
+    }
+
+    SecurityTestResult::pass(
+        "Vault header sanity verified. Modern PARCELA2 format in use; \
+         salt/nonce present and non-zero; ciphertext length includes AEAD tag.",
+    )
 }
 
 /// Verify share integrity checksums work correctly.
@@ -555,6 +621,20 @@ mod tests {
     }
 
     #[test]
+    fn aead_catches_truncation() {
+        let encrypted = encrypt(TEST_PLAINTEXT, TEST_PASSWORD).unwrap();
+
+        // Truncate the ciphertext (remove last byte)
+        let mut truncated = encrypted.clone();
+        truncated.truncate(encrypted.len() - 1);
+
+        assert!(
+            decrypt(&truncated, TEST_PASSWORD).is_err(),
+            "Truncated ciphertext should NOT decrypt"
+        );
+    }
+
+    #[test]
     fn aead_catches_every_byte_position() {
         let encrypted = encrypt(TEST_PLAINTEXT, TEST_PASSWORD).unwrap();
 
@@ -635,6 +715,58 @@ mod tests {
         let nonce2 = &enc2[40..52];
 
         assert_ne!(nonce1, nonce2, "Nonces should be unique");
+    }
+
+    // =========================================================================
+    // Tests for verify_vault_header_sanity
+    // =========================================================================
+
+    #[test]
+    fn vault_header_sanity_passes_with_valid_blob() {
+        let encrypted = encrypt(TEST_PLAINTEXT, TEST_PASSWORD).unwrap();
+        let result = verify_vault_header_sanity(&encrypted);
+        assert!(result.passed, "Should pass: {}", result.message);
+    }
+
+    #[test]
+    fn vault_header_sanity_fails_on_legacy_magic() {
+        let mut encrypted = encrypt(TEST_PLAINTEXT, TEST_PASSWORD).unwrap();
+        encrypted[..8].copy_from_slice(MAGIC_BLOB_V1);
+        let result = verify_vault_header_sanity(&encrypted);
+        assert!(!result.passed);
+        assert!(result.message.contains("legacy"));
+    }
+
+    #[test]
+    fn vault_header_sanity_fails_on_all_zero_salt() {
+        let mut encrypted = encrypt(TEST_PLAINTEXT, TEST_PASSWORD).unwrap();
+        for b in &mut encrypted[8..8 + SALT_SIZE] {
+            *b = 0;
+        }
+        let result = verify_vault_header_sanity(&encrypted);
+        assert!(!result.passed);
+        assert!(result.message.contains("Salt is all zeros"));
+    }
+
+    #[test]
+    fn vault_header_sanity_fails_on_all_zero_nonce() {
+        let mut encrypted = encrypt(TEST_PLAINTEXT, TEST_PASSWORD).unwrap();
+        let nonce_start = 8 + SALT_SIZE;
+        for b in &mut encrypted[nonce_start..nonce_start + 12] {
+            *b = 0;
+        }
+        let result = verify_vault_header_sanity(&encrypted);
+        assert!(!result.passed);
+        assert!(result.message.contains("Nonce is all zeros"));
+    }
+
+    #[test]
+    fn vault_header_sanity_fails_on_truncated_blob() {
+        let mut encrypted = encrypt(TEST_PLAINTEXT, TEST_PASSWORD).unwrap();
+        encrypted.truncate(8 + SALT_SIZE + 12 + 15);
+        let result = verify_vault_header_sanity(&encrypted);
+        assert!(!result.passed);
+        assert!(result.message.contains("too small"));
     }
 
     // =========================================================================

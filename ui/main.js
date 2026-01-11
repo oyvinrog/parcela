@@ -1848,6 +1848,12 @@ const SECURITY_TESTS = [
     run: "verify_nonce_uniqueness",
   },
   {
+    id: "vault_header_sanity",
+    title: "Vault Header Sanity Checks",
+    desc: "Rejects legacy SHA-256 format and checks header for truncation or RNG failure (all-zero salt/nonce).",
+    run: "verify_vault_header_sanity",
+  },
+  {
     id: "key_zeroization",
     title: "Key Memory Zeroization",
     desc: "Verifies encryption keys are securely zeroed from memory after use.",
