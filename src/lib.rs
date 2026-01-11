@@ -40,7 +40,7 @@ pub const MAGIC_SHARE_V2: &[u8; 8] = b"PSHARE02";
 /// Salt size for Argon2id
 pub const SALT_SIZE: usize = 32;
 
-/// Argon2id parameters for high security (targets ~2s on modern hardware)
+/// Argon2id parameters for security (~150ms on modern hardware)
 /// - Memory: 64 MiB (good resistance against GPU/ASIC attacks)
 /// - Time: 3 iterations
 /// - Parallelism: 4 lanes
@@ -92,7 +92,7 @@ fn derive_key_legacy(password: &str) -> SecureKey {
 }
 
 /// Derive encryption key using Argon2id with high-security parameters.
-/// This function is intentionally slow (10-20 seconds) to protect against brute-force attacks.
+/// This function takes ~150ms on modern hardware to protect against brute-force attacks.
 /// Returns a SecureKey that will be zeroed on drop.
 pub(crate) fn derive_key(password: &str, salt: &[u8]) -> Result<SecureKey, ParcelaError> {
     let params = Params::new(ARGON2_M_COST, ARGON2_T_COST, ARGON2_P_COST, Some(32))

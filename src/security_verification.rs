@@ -36,6 +36,7 @@ impl SecurityTestResult {
     }
 }
 
+
 /// Verify that a single share cannot recover the secret (2-of-3 threshold property).
 ///
 /// This test ensures that:
@@ -304,6 +305,161 @@ pub fn verify_vault_header_sanity(encrypted_blob: &[u8]) -> SecurityTestResult {
         "Vault header sanity verified. Modern PARCELA2 format in use; \
          salt/nonce present and non-zero; ciphertext length includes AEAD tag.",
     )
+}
+
+/// Measure Argon2id key derivation time and estimate brute-force resistance.
+///
+/// This test:
+/// 1. Verifies the vault uses PARCELA2 format (Argon2id KDF)
+/// 2. Measures key derivation time on this machine
+/// 3. Estimates brute-force time based on password length and character classes
+/// 4. Passes if the password would take >= 100 years to crack with 1000 GPUs
+pub fn verify_bruteforce_resistance(
+    encrypted_blob: &[u8],
+    password: &str,
+) -> SecurityTestResult {
+    use std::time::Instant;
+
+    if encrypted_blob.len() < 8 + SALT_SIZE {
+        return SecurityTestResult::fail(
+            "Vault file too small to contain proper encryption header.",
+        );
+    }
+
+    // Verify it uses Argon2id (PARCELA2 format)
+    let magic = &encrypted_blob[..8];
+    if magic != MAGIC_BLOB {
+        return SecurityTestResult::fail(
+            "Vault uses legacy SHA-256 key derivation (PARCELA1). \
+             Recommend re-encrypting with current format for Argon2id protection.",
+        );
+    }
+
+    // Measure key derivation time
+    let start = Instant::now();
+    let _ = decrypt(encrypted_blob, password);
+    let elapsed = start.elapsed();
+    let ms = elapsed.as_millis() as f64;
+
+    // Analyze actual password character classes and length
+    let pwd_len = password.len();
+    let has_lower = password.chars().any(|c| c.is_ascii_lowercase());
+    let has_upper = password.chars().any(|c| c.is_ascii_uppercase());
+    let has_digit = password.chars().any(|c| c.is_ascii_digit());
+    let has_special = password.chars().any(|c| !c.is_ascii_alphanumeric());
+
+    // Calculate charset size based on character classes present
+    let charset_size: f64 = if has_lower { 26.0 } else { 0.0 }
+        + if has_upper { 26.0 } else { 0.0 }
+        + if has_digit { 10.0 } else { 0.0 }
+        + if has_special { 32.0 } else { 0.0 }; // Common special chars
+
+    // Minimum charset assumption (attacker assumes at least lowercase)
+    let effective_charset = charset_size.max(26.0);
+
+    // Password space for user's actual password
+    let user_password_space = effective_charset.powf(pwd_len as f64);
+
+    // Calculate brute-force estimates
+    // Assuming attacker has 1000 GPUs, each doing 10 attempts/sec (Argon2id is memory-hard)
+    let attempts_per_sec_per_gpu = 10.0;
+    let num_gpus = 1000.0;
+    let total_attempts_per_sec = attempts_per_sec_per_gpu * num_gpus;
+
+    // Estimate for user's actual password
+    let user_seconds = user_password_space / total_attempts_per_sec;
+    let user_time_str = format_time_estimate(user_seconds);
+
+    // Describe the detected character classes
+    let mut classes = Vec::new();
+    if has_lower {
+        classes.push("lowercase");
+    }
+    if has_upper {
+        classes.push("uppercase");
+    }
+    if has_digit {
+        classes.push("digits");
+    }
+    if has_special {
+        classes.push("special");
+    }
+    let classes_desc = if classes.is_empty() {
+        "unknown".to_string()
+    } else {
+        classes.join(" + ")
+    };
+
+    // Reference password spaces for comparison
+    let password_spaces: [(&str, f64); 5] = [
+        ("4-digit PIN", 10_000.0),
+        ("6-char lowercase", 26.0_f64.powf(6.0)),
+        ("8-char mixed case", 52.0_f64.powf(8.0)),
+        ("8-char alphanumeric", 62.0_f64.powf(8.0)),
+        ("12-char alphanumeric", 62.0_f64.powf(12.0)),
+    ];
+
+    let mut estimates = Vec::new();
+    for (name, space) in password_spaces.iter() {
+        let seconds = *space / total_attempts_per_sec;
+        let time_str = format_time_estimate(seconds);
+        estimates.push(format!("{}: {}", name, time_str));
+    }
+
+    // Pass criteria:
+    // 1. Key derivation >= 50ms (Argon2id is working)
+    // 2. Estimated brute-force time >= 100 years for the user's password
+    let min_years_required = 100.0;
+    let user_years = user_seconds / 31536000.0;
+    let kdf_ok = ms >= 50.0;
+    let password_strong_enough = user_years >= min_years_required;
+    let passed = kdf_ok && password_strong_enough;
+
+    let strength_verdict = if user_years >= 1.0e9 {
+        "Excellent"
+    } else if user_years >= 1.0e6 {
+        "Very Strong"
+    } else if user_years >= 1000.0 {
+        "Strong"
+    } else if user_years >= 100.0 {
+        "Adequate"
+    } else if user_years >= 1.0 {
+        "Weak"
+    } else {
+        "Critical: Too Weak"
+    };
+
+    SecurityTestResult {
+        passed,
+        message: format!(
+            "Key derivation: {:.0}ms (Argon2id, 64MiB memory)\n\
+             Your password: {} chars ({}) → {} to crack [{}]\n\
+             Reference times (1000 GPUs):\n  • {}",
+            ms,
+            pwd_len,
+            classes_desc,
+            user_time_str,
+            strength_verdict,
+            estimates.join("\n  • ")
+        ),
+    }
+}
+
+/// Format seconds into a human-readable time estimate
+fn format_time_estimate(seconds: f64) -> String {
+    if seconds < 60.0 {
+        format!("{:.1} seconds", seconds)
+    } else if seconds < 3600.0 {
+        format!("{:.1} minutes", seconds / 60.0)
+    } else if seconds < 86400.0 {
+        format!("{:.1} hours", seconds / 3600.0)
+    } else if seconds < 31536000.0 {
+        format!("{:.1} days", seconds / 86400.0)
+    } else if seconds < 31536000.0 * 1000.0 {
+        format!("{:.1} years", seconds / 31536000.0)
+    } else {
+        format!("{:.2e} years", seconds / 31536000.0)
+    }
 }
 
 /// Verify share integrity checksums work correctly.
