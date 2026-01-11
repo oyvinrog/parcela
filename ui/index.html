@@ -51,10 +51,13 @@
             <div class="vault-meta">
               <div class="vault-name" id="vault-name">Vault</div>
               <div class="vault-path" id="vault-current-path"></div>
+              <div class="vault-security-badge" id="vault-security-badge">
+                <span class="badge-icon"></span>
+                <span class="badge-text"></span>
+              </div>
             </div>
             <div class="vault-actions">
               <button id="add-virtual-drive" class="primary">Create Virtual Drive</button>
-              <button id="refresh-status">Refresh status</button>
             </div>
             <div class="selection-controls">
               <label class="select-all">
@@ -156,6 +159,37 @@
         <div class="loading-spinner"></div>
         <div class="loading-title" id="loading-title">Deriving encryption key…</div>
         <div class="loading-subtitle">This uses Argon2id with high-security parameters.</div>
+      </div>
+    </div>
+
+    <!-- Security Verification Dialog -->
+    <div id="security-dialog" class="modal-overlay hidden">
+      <div class="security-dialog">
+        <div class="security-dialog-header">
+          <h2>🔐 Security Verification</h2>
+          <button id="security-dialog-close" class="dialog-close">×</button>
+        </div>
+        <div class="security-vault-info" id="security-vault-info">
+          <div class="security-vault-name" id="security-vault-name">Vault</div>
+          <div class="security-vault-path" id="security-vault-path"></div>
+        </div>
+        <div class="security-last-check hidden" id="security-last-check">
+          <div class="security-last-check-content" id="security-last-check-content"></div>
+        </div>
+        <p class="security-dialog-desc">
+          Running academic security attacks against your vault to verify cryptographic integrity.
+        </p>
+        <div class="security-tests" id="security-tests">
+          <!-- Tests will be populated by JavaScript -->
+        </div>
+        <div class="security-summary hidden" id="security-summary">
+          <div class="security-summary-icon" id="security-summary-icon"></div>
+          <div class="security-summary-text" id="security-summary-text"></div>
+        </div>
+        <div class="security-dialog-actions">
+          <button id="security-run-tests" class="primary">Run Security Tests</button>
+          <button id="security-dialog-dismiss">Close</button>
+        </div>
       </div>
     </div>
 

@@ -5,7 +5,7 @@
 <h1 align="center">Parcela</h1>
 
 <p align="center">
-  <strong>Split-key encryption vault for maximum security</strong><br>
+  <strong>Split-key encryption vault</strong><br>
   Your files require <em>both</em> your password <em>and</em> physical possession of shares to decrypt.
 </p>
 
@@ -75,10 +75,26 @@ cargo tauri dev
 | Feature | Description |
 |---------|-------------|
 | 🔐 **2-of-3 Secret Sharing** | Split files into 3 shares — any 2 can recover the original |
-| 🛡️ **AES-256-GCM Encryption** | Military-grade authenticated encryption |
+| 🛡️ **AES-256-GCM + Argon2** | Authenticated encryption with memory-hard key derivation |
+| 🖼️ **Steganographic Image Shares** | Shares embedded in PNG images via custom chunks |
 | 💾 **Virtual Drive** | RAM-backed encrypted filesystem — browse in your file manager |
 | 🖥️ **Cross-Platform GUI** | Native desktop app for Windows, macOS, and Linux |
 | ⌨️ **CLI Support** | Full command-line interface for automation |
+
+### Steganographic Image Shares
+
+By default, Parcela embeds share data inside PNG images using custom PNG chunks:
+
+- **20 different icon designs** — Smiley, sun, star, heart, moon, cloud, and more
+- **Valid PNG files** — Open normally in any image viewer
+- **Casual concealment** — Shares look like ordinary image files
+- **Backward compatible** — Still reads legacy binary share formats
+
+> ⚠️ **Important:** Do not re-save, edit, or upload image shares to services that re-encode images (e.g., social media, image hosting). This will strip the embedded share data and make the shares unrecoverable.
+
+<p align="center">
+  <img src="docs/assets/stego-example.png" alt="Steganographic Shares" width="400">
+</p>
 
 ### Virtual Drive
 
@@ -99,7 +115,7 @@ Files exist only in RAM — nothing is written to disk unencrypted.
 
 ## CLI Usage
 
-**Split a file into shares:**
+**Split a file into shares (default: PNG images):**
 
 ```bash
 parcela split \
@@ -108,13 +124,25 @@ parcela split \
   --password "your-passphrase"
 ```
 
+Creates: `secret.txt.share1.png`, `secret.txt.share2.png`, `secret.txt.share3.png`
+
+**Split into legacy binary format:**
+
+```bash
+parcela split \
+  --input /path/to/secret.txt \
+  --out-dir /path/to/shares \
+  --password "your-passphrase" \
+  --legacy
+```
+
 Creates: `secret.txt.share1`, `secret.txt.share2`, `secret.txt.share3`
 
-**Recover from any 2 shares:**
+**Recover from any 2 shares (works with both formats):**
 
 ```bash
 parcela combine \
-  --shares /path/to/secret.txt.share1 /path/to/secret.txt.share3 \
+  --shares /path/to/secret.txt.share1.png /path/to/secret.txt.share3.png \
   --output /path/to/recovered.txt \
   --password "your-passphrase"
 ```

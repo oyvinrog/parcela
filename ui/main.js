@@ -37,6 +37,7 @@ const recentVaultListEl = document.getElementById("recent-vault-list");
 const vaultPasswordEl = document.getElementById("vault-password");
 const vaultCurrentPathEl = document.getElementById("vault-current-path");
 const vaultNameEl = document.getElementById("vault-name");
+const vaultSecurityBadgeEl = document.getElementById("vault-security-badge");
 const selectAllEl = document.getElementById("select-all-files");
 const recoverSelectedBtn = document.getElementById("recover-selected");
 
@@ -72,6 +73,20 @@ const fbDeleteBtn = document.getElementById("fb-delete");
 // Loading overlay elements
 const loadingOverlay = document.getElementById("loading-overlay");
 const loadingTitle = document.getElementById("loading-title");
+
+// Security dialog elements
+const securityDialog = document.getElementById("security-dialog");
+const securityTestsEl = document.getElementById("security-tests");
+const securitySummaryEl = document.getElementById("security-summary");
+const securitySummaryIconEl = document.getElementById("security-summary-icon");
+const securitySummaryTextEl = document.getElementById("security-summary-text");
+const securityRunTestsBtn = document.getElementById("security-run-tests");
+const securityDialogCloseBtn = document.getElementById("security-dialog-close");
+const securityDialogDismissBtn = document.getElementById("security-dialog-dismiss");
+const securityVaultNameEl = document.getElementById("security-vault-name");
+const securityVaultPathEl = document.getElementById("security-vault-path");
+const securityLastCheckEl = document.getElementById("security-last-check");
+const securityLastCheckContentEl = document.getElementById("security-last-check-content");
 
 function showLoading(message = "Deriving encryption key…") {
   console.log("[Parcela] showLoading:", message);
@@ -127,7 +142,54 @@ function showVaultScreen() {
   vaultNameEl.textContent = state.vaultPath
     ? getFileName(state.vaultPath)
     : "Vault";
+  updateSecurityBadge();
   startAutoRefresh();
+}
+
+function updateSecurityBadge() {
+  if (!vaultSecurityBadgeEl) return;
+  
+  const badge = vaultSecurityBadgeEl;
+  const iconEl = badge.querySelector(".badge-icon");
+  const textEl = badge.querySelector(".badge-text");
+  
+  badge.classList.remove("verified", "failed", "unverified", "no-drive");
+  
+  // Get the selected drive (security is per-drive)
+  const selectedDrive = state.selectedType === "drive" 
+    ? (state.vault.virtual_drives || []).find((d) => d.id === state.selectedFileId)
+    : null;
+  
+  if (!selectedDrive) {
+    badge.classList.add("no-drive");
+    iconEl.textContent = "–";
+    textEl.textContent = "Select a drive";
+    badge.title = "Select a virtual drive to verify its security.";
+    return;
+  }
+  
+  if (selectedDrive.security_last_verified) {
+    const lastDate = new Date(selectedDrive.security_last_verified);
+    const timeAgo = formatTimeAgo(lastDate);
+    const passed = selectedDrive.security_last_passed;
+    
+    if (passed === true) {
+      badge.classList.add("verified");
+      iconEl.textContent = "✓";
+      textEl.textContent = `${selectedDrive.name}: Verified ${timeAgo}`;
+      badge.title = `${selectedDrive.name} security verified on ${lastDate.toLocaleString()}. Click to re-verify.`;
+    } else {
+      badge.classList.add("failed");
+      iconEl.textContent = "⚠";
+      textEl.textContent = `${selectedDrive.name}: Failed ${timeAgo}`;
+      badge.title = `${selectedDrive.name} security verification FAILED on ${lastDate.toLocaleString()}. Click to re-verify.`;
+    }
+  } else {
+    badge.classList.add("unverified");
+    iconEl.textContent = "⚠";
+    textEl.textContent = `${selectedDrive.name}: Not verified`;
+    badge.title = `${selectedDrive.name} has never been security tested. Click to verify.`;
+  }
 }
 
 function showLoginScreen() {
@@ -420,17 +482,36 @@ function renderFileList() {
     const title = document.createElement("div");
     title.className = "file-title";
     title.textContent = drive.name;
+    title.title = drive.name; // Tooltip for truncated names
+
+    info.appendChild(icon);
+    info.appendChild(title);
+
+    const meta = document.createElement("div");
+    meta.className = "file-meta";
 
     const sizeTag = document.createElement("span");
     sizeTag.className = "size-tag";
     sizeTag.textContent = `${drive.size_mb}MB`;
 
-    info.appendChild(icon);
-    info.appendChild(title);
-    info.appendChild(sizeTag);
-
-    const meta = document.createElement("div");
-    meta.className = "file-meta";
+    // Security status indicator
+    const securityIndicator = document.createElement("span");
+    securityIndicator.className = "drive-security-indicator";
+    if (drive.security_last_verified) {
+      if (drive.security_last_passed === true) {
+        securityIndicator.className += " verified";
+        securityIndicator.textContent = "✓";
+        securityIndicator.title = "Security verified";
+      } else {
+        securityIndicator.className += " failed";
+        securityIndicator.textContent = "⚠";
+        securityIndicator.title = "Security verification failed!";
+      }
+    } else {
+      securityIndicator.className += " unverified";
+      securityIndicator.textContent = "?";
+      securityIndicator.title = "Not yet verified";
+    }
 
     const lights = document.createElement("div");
     lights.className = "lights-inline";
@@ -447,8 +528,27 @@ function renderFileList() {
     const availableCount = drive.available.filter(Boolean).length;
     count.textContent = `${availableCount}/3`;
 
+    meta.appendChild(sizeTag);
+    meta.appendChild(securityIndicator);
     meta.appendChild(lights);
     meta.appendChild(count);
+
+    // Verify security button for this drive
+    const verifyBtn = document.createElement("button");
+    verifyBtn.type = "button";
+    verifyBtn.className = "drive-verify-btn";
+    verifyBtn.textContent = "🔐";
+    verifyBtn.title = "Verify security";
+    verifyBtn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      // Select this drive first, then show security dialog
+      state.selectedFileId = drive.id;
+      state.selectedType = "drive";
+      renderDetail();
+      renderFileList();
+      showSecurityDialog();
+    });
+    meta.appendChild(verifyBtn);
 
     // Delete button
     const deleteBtn = document.createElement("button");
@@ -504,6 +604,7 @@ function renderFileList() {
     const title = document.createElement("div");
     title.className = "file-title";
     title.textContent = file.name;
+    title.title = file.name; // Tooltip for truncated names
 
     info.appendChild(checkbox);
     info.appendChild(title);
@@ -569,6 +670,9 @@ function renderDetail() {
     entry = (state.vault.files || []).find((f) => f.id === state.selectedFileId);
     isDrive = false;
   }
+
+  // Update security badge (shows status for selected drive)
+  updateSecurityBadge();
 
   if (!entry) {
     detailEmptyEl.classList.remove("hidden");
@@ -1201,7 +1305,21 @@ async function handleDeleteEntry(entryId, entryType) {
     // Delete share files if requested
     if (deleteFiles && availableShares.length > 0) {
       setStatus("Deleting share files...");
-      await invoke("delete_files", { paths: availableShares });
+      try {
+        await invoke("delete_files", { paths: availableShares, force: false });
+      } catch (deleteErr) {
+        // If normal deletion fails (e.g., corrupted share), offer force-delete
+        const forceDelete = confirm(
+          `Failed to delete share files: ${deleteErr}\n\n` +
+          `This may indicate corrupted share files.\n` +
+          `Force delete anyway? (This will skip validation)`
+        );
+        if (forceDelete) {
+          await invoke("delete_files", { paths: availableShares, force: true });
+        } else {
+          throw new Error("Deletion cancelled by user");
+        }
+      }
     }
 
     // Remove from vault state
@@ -1575,7 +1693,6 @@ document.getElementById("open-vault").addEventListener("click", handleOpenVault)
 document.getElementById("create-vault").addEventListener("click", handleCreateVault);
 
 document.getElementById("add-virtual-drive").addEventListener("click", handleCreateVirtualDrive);
-document.getElementById("refresh-status").addEventListener("click", handleRefreshStatus);
 selectAllEl.addEventListener("change", () => {
   if (selectAllEl.checked) {
     setSelectedFiles(state.vault.files.map((file) => file.id));
@@ -1702,6 +1819,347 @@ handleOpenVault = async function() {
 // Re-attach click handler with new implementation
 document.getElementById("open-vault").removeEventListener("click", originalHandleOpenVault);
 document.getElementById("open-vault").addEventListener("click", handleOpenVault);
+
+// =============================================================================
+// Security Verification Dialog
+// =============================================================================
+
+const SECURITY_TESTS = [
+  {
+    id: "single_share_recovery",
+    title: "Single Share Recovery Attack",
+    desc: "Verifies that the secret CANNOT be recovered using only 1 of 3 shares (k-1 threshold attack).",
+    help: "We pretend someone only has 1 share of \"{driveName}\" and tries to open it. This should fail because you need 2 shares. If it didn't fail, your drive could be opened too easily.",
+    run: "verify_single_share_unrecoverable",
+  },
+  {
+    id: "bruteforce_timing",
+    title: "Brute-Force Time Estimation",
+    desc: "Measures Argon2id key derivation time and estimates cost to brute-force passwords.",
+    help: "We time how long your computer takes to turn your password into a key for \"{driveName}\". Longer time means attackers have to spend more time per guess. If it's too fast, weak passwords are easier to guess.",
+    run: "verify_bruteforce_resistance",
+  },
+  {
+    id: "share_integrity",
+    title: "Share Integrity Verification",
+    desc: "Verifies SHA-256 checksums on shares to detect corruption or tampering.",
+    help: "Each share has a tamper seal (a checksum). We check each share for \"{driveName}\" so a changed or corrupted share is detected before use.",
+    run: "verify_share_integrity",
+  },
+  {
+    id: "share_independence",
+    title: "Share Statistical Independence",
+    desc: "Verifies shares appear random and reveal no information about the secret (information-theoretic security).",
+    help: "We check that the shares for \"{driveName}\" look like random noise. If a share had patterns, it could leak hints about the drive without needing two shares.",
+    run: "verify_share_independence",
+  },
+  {
+    id: "aead_authentication",
+    title: "AEAD Authentication Test",
+    desc: "Verifies AES-256-GCM detects any bit-flip in ciphertext (chosen-ciphertext attack resistance).",
+    help: "We flip tiny bits in the encrypted data and make sure opening \"{driveName}\" fails. If it still opened, someone could alter data without you noticing.",
+    run: "verify_aead_authentication",
+  },
+  {
+    id: "nonce_uniqueness",
+    title: "Nonce Uniqueness Verification",
+    desc: "Verifies each encryption uses a unique random nonce (nonce-reuse attack prevention).",
+    help: "We make sure every encryption uses new random numbers. If \"{driveName}\" reused them, attackers could compare versions and learn about the contents.",
+    run: "verify_nonce_uniqueness",
+  },
+  {
+    id: "vault_header_sanity",
+    title: "Vault Header Sanity Checks",
+    desc: "Rejects legacy SHA-256 format and checks header for truncation or RNG failure (all-zero salt/nonce).",
+    help: "We check the file header for \"{driveName}\" to make sure it's the modern format, not truncated, and has proper random values. Bad headers can weaken security or corrupt data.",
+    run: "verify_vault_header_sanity",
+  },
+  {
+    id: "key_zeroization",
+    title: "Key Memory Zeroization",
+    desc: "Verifies encryption keys are securely zeroed from memory after use.",
+    help: "We verify the app clears secret keys from memory after use so someone grabbing memory can't recover the key for \"{driveName}\".",
+    run: "verify_key_zeroization",
+  },
+];
+
+function showSecurityDialog() {
+  // Get the selected drive
+  const selectedDrive = state.selectedType === "drive" 
+    ? (state.vault.virtual_drives || []).find((d) => d.id === state.selectedFileId)
+    : null;
+  
+  if (!selectedDrive) {
+    setStatus("Select a virtual drive to verify its security.", "error");
+    return;
+  }
+  
+  renderSecurityTests("pending");
+  securitySummaryEl.classList.add("hidden");
+  
+  // Show drive info (not vault)
+  securityVaultNameEl.textContent = `🔒 ${selectedDrive.name}`;
+  securityVaultPathEl.textContent = `Virtual Drive • ${selectedDrive.size_mb}MB`;
+  
+  // Show last verification status for this drive
+  securityLastCheckEl.classList.remove("pass", "fail", "never");
+  if (selectedDrive.security_last_verified) {
+    const lastDate = new Date(selectedDrive.security_last_verified);
+    const timeAgo = formatTimeAgo(lastDate);
+    const passed = selectedDrive.security_last_passed;
+    
+    if (passed === true) {
+      securityLastCheckEl.classList.remove("hidden");
+      securityLastCheckEl.classList.add("pass");
+      securityLastCheckContentEl.innerHTML = `
+        <strong>✓ Last verified ${timeAgo}</strong><br>
+        All security tests passed on ${lastDate.toLocaleString()}
+      `;
+    } else if (passed === false) {
+      securityLastCheckEl.classList.remove("hidden");
+      securityLastCheckEl.classList.add("fail");
+      securityLastCheckContentEl.innerHTML = `
+        <strong>⚠️ Warning: Last verification FAILED</strong><br>
+        Security tests failed on ${lastDate.toLocaleString()}. Run tests again to check current status.
+      `;
+    } else {
+      securityLastCheckEl.classList.add("hidden");
+    }
+  } else {
+    securityLastCheckEl.classList.remove("hidden");
+    securityLastCheckEl.classList.add("never");
+    securityLastCheckContentEl.innerHTML = `
+      <strong>⚠️ Never verified</strong><br>
+      This drive has not been security tested yet. Run tests to verify cryptographic integrity.
+    `;
+  }
+  
+  securityDialog.classList.remove("hidden");
+}
+
+function formatTimeAgo(date) {
+  const now = new Date();
+  const diffMs = now - date;
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  
+  if (diffDays > 30) {
+    return `on ${date.toLocaleDateString()}`;
+  } else if (diffDays > 1) {
+    return `${diffDays} days ago`;
+  } else if (diffDays === 1) {
+    return "yesterday";
+  } else if (diffHours > 1) {
+    return `${diffHours} hours ago`;
+  } else if (diffHours === 1) {
+    return "1 hour ago";
+  } else if (diffMins > 1) {
+    return `${diffMins} minutes ago`;
+  } else {
+    return "just now";
+  }
+}
+
+function hideSecurityDialog() {
+  securityDialog.classList.add("hidden");
+}
+
+function renderSecurityTests(defaultStatus) {
+  securityTestsEl.innerHTML = "";
+  const selectedDrive =
+    state.selectedType === "drive"
+      ? (state.vault.virtual_drives || []).find((d) => d.id === state.selectedFileId)
+      : null;
+  const driveName = selectedDrive && selectedDrive.name ? selectedDrive.name : "this drive";
+
+  for (const test of SECURITY_TESTS) {
+    const el = document.createElement("div");
+    el.className = `security-test ${defaultStatus}`;
+    el.id = `test-${test.id}`;
+    const helpText = (test.help || "").replace("{driveName}", driveName);
+    el.innerHTML = `
+      <div class="security-test-indicator">
+        ${defaultStatus === "pending" ? "○" : defaultStatus === "running" ? "◉" : ""}
+      </div>
+      <div class="security-test-content">
+        <div class="security-test-header">
+          <div class="security-test-title">${test.title}</div>
+          <button class="security-test-help" type="button" aria-label="Explain ${test.title}" aria-expanded="false">i</button>
+        </div>
+        <div class="security-test-desc">${test.desc}</div>
+        <div class="security-test-help-text hidden"></div>
+      </div>
+    `;
+    const helpTextEl = el.querySelector(".security-test-help-text");
+    if (helpTextEl) {
+      helpTextEl.textContent = helpText;
+    }
+    const helpBtn = el.querySelector(".security-test-help");
+    if (helpBtn && helpTextEl) {
+      helpBtn.addEventListener("click", () => {
+        const isHidden = helpTextEl.classList.toggle("hidden");
+        helpBtn.setAttribute("aria-expanded", isHidden ? "false" : "true");
+      });
+    }
+    securityTestsEl.appendChild(el);
+  }
+}
+
+function updateTestStatus(testId, status, result = null) {
+  const el = document.getElementById(`test-${testId}`);
+  if (!el) return;
+
+  el.className = `security-test ${status}`;
+  const indicator = el.querySelector(".security-test-indicator");
+
+  if (status === "pending") indicator.textContent = "○";
+  else if (status === "running") indicator.textContent = "◉";
+  else if (status === "pass") indicator.textContent = "✓";
+  else if (status === "fail") indicator.textContent = "✗";
+
+  // Add or update result
+  let resultEl = el.querySelector(".security-test-result");
+  if (result) {
+    if (!resultEl) {
+      resultEl = document.createElement("div");
+      resultEl.className = "security-test-result";
+      el.querySelector(".security-test-content").appendChild(resultEl);
+    }
+    resultEl.textContent = result;
+  } else if (resultEl) {
+    resultEl.remove();
+  }
+}
+
+async function runSecurityTests() {
+  securityRunTestsBtn.disabled = true;
+  securityRunTestsBtn.textContent = "Running...";
+  securitySummaryEl.classList.add("hidden");
+
+  // Reset all tests to pending
+  renderSecurityTests("pending");
+
+  let passed = 0;
+  let failed = 0;
+
+  // Get available share paths for the selected item
+  let sharePaths = [];
+  if (state.selectedType === "drive") {
+    const drive = (state.vault.virtual_drives || []).find((d) => d.id === state.selectedFileId);
+    if (drive) {
+      sharePaths = drive.shares.filter((p, i) => p && drive.available && drive.available[i]);
+    }
+  } else {
+    const file = (state.vault.files || []).find((f) => f.id === state.selectedFileId);
+    if (file) {
+      sharePaths = file.shares.filter((p, i) => p && file.available && file.available[i]);
+    }
+  }
+
+  for (const test of SECURITY_TESTS) {
+    updateTestStatus(test.id, "running");
+    await waitForPaint();
+
+    try {
+      const result = await invoke("run_security_test", {
+        testName: test.run,
+        sharePaths,
+        password: state.vaultPassword,
+        vaultPath: state.vaultPath,
+      });
+
+      if (result.passed) {
+        passed++;
+        updateTestStatus(test.id, "pass", result.message);
+      } else {
+        failed++;
+        updateTestStatus(test.id, "fail", result.message);
+      }
+    } catch (err) {
+      failed++;
+      updateTestStatus(test.id, "fail", `Error: ${err}`);
+    }
+
+    await waitForPaint();
+  }
+
+  // Show summary
+  securitySummaryEl.classList.remove("hidden", "pass", "fail");
+  const allPassed = failed === 0;
+  
+  if (allPassed) {
+    securitySummaryEl.classList.add("pass");
+    securitySummaryIconEl.textContent = "🛡️";
+    securitySummaryTextEl.innerHTML = `
+      <strong>All ${passed} security tests passed!</strong><br>
+      This drive demonstrates strong cryptographic security properties.
+    `;
+  } else {
+    securitySummaryEl.classList.add("fail");
+    securitySummaryIconEl.textContent = "⚠️";
+    securitySummaryTextEl.innerHTML = `
+      <strong>${failed} of ${passed + failed} tests failed.</strong><br>
+      Review the failed tests above for details.
+    `;
+  }
+
+  // Save verification result to the selected drive
+  const selectedDrive = state.selectedType === "drive" 
+    ? (state.vault.virtual_drives || []).find((d) => d.id === state.selectedFileId)
+    : null;
+  
+  if (selectedDrive) {
+    selectedDrive.security_last_verified = Date.now();
+    selectedDrive.security_last_passed = allPassed;
+    try {
+      await saveVault();
+      console.log("[Parcela] Security verification result saved to drive:", selectedDrive.name);
+      updateSecurityBadge();
+      renderFileList(); // Update the drive list to show new security status
+    } catch (err) {
+      console.error("[Parcela] Failed to save verification result:", err);
+    }
+  }
+
+  securityRunTestsBtn.disabled = false;
+  securityRunTestsBtn.textContent = "Run Security Tests";
+}
+
+// Security dialog event listeners (verify button removed from top, now on each drive)
+
+if (securityDialogCloseBtn) {
+  securityDialogCloseBtn.addEventListener("click", hideSecurityDialog);
+}
+
+if (securityDialogDismissBtn) {
+  securityDialogDismissBtn.addEventListener("click", hideSecurityDialog);
+}
+
+if (securityRunTestsBtn) {
+  securityRunTestsBtn.addEventListener("click", runSecurityTests);
+}
+
+// Close dialog when clicking outside
+if (securityDialog) {
+  securityDialog.addEventListener("click", (e) => {
+    if (e.target === securityDialog) {
+      hideSecurityDialog();
+    }
+  });
+}
+
+// Security badge click opens verification dialog
+if (vaultSecurityBadgeEl) {
+  vaultSecurityBadgeEl.addEventListener("click", () => {
+    if (!state.vaultPath) {
+      setStatus("Open a vault first to verify security.", "error");
+      return;
+    }
+    showSecurityDialog();
+  });
+}
 
 showLoginScreen();
 renderFileList();
