@@ -1,5 +1,5 @@
 # Fdb version 4
-["pdflatex"] 1768134564.10538 "Parcela-Whitepaper.tex" "Parcela-Whitepaper.pdf" "Parcela-Whitepaper" 1768134564.80376 0
+["pdflatex"] 1768135068.7589 "Parcela-Whitepaper.tex" "Parcela-Whitepaper.pdf" "Parcela-Whitepaper" 1768135069.19757 0
   "../docs/assets/architecture.png" 1766879904.33716 305381 26d25578d7c2eb9402c7e199b857b420 ""
   "../docs/assets/explanation.png" 1766879904.34116 430636 4503a4b9d42389e89d919d8c5a5290ca ""
   "../docs/assets/stego-shares.png" 1768133546.18862 174329 ab3d2cb7075a8ba26f7c261f81fe0b6a ""
@@ -190,9 +190,9 @@
   "/usr/share/texmf/web2c/texmf.cnf" 1741904018 41538 c016915c1d51223b6dbbfe27341748a8 ""
   "/var/lib/texmf/fonts/map/pdftex/updmap/pdftex.map" 1768132944 128227 ed67923a37f7748d267799454bc1f95b ""
   "/var/lib/texmf/web2c/pdftex/pdflatex.fmt" 1768132956 1928191 7622dea5274471b172d2e55e10f3991b ""
-  "Parcela-Whitepaper.aux" 1768134564.70527 2593 c81fc4358f812dcc9664f166d4970d47 "pdflatex"
-  "Parcela-Whitepaper.out" 1768134564.70527 1497 b5c16e074817ba19b321608eecec8e14 "pdflatex"
-  "Parcela-Whitepaper.tex" 1768134553.83326 8108 d10a9d435e77746407d84279d26fbf85 ""
+  "Parcela-Whitepaper.aux" 1768135069.1377 2593 c81fc4358f812dcc9664f166d4970d47 "pdflatex"
+  "Parcela-Whitepaper.out" 1768135069.1377 1497 b5c16e074817ba19b321608eecec8e14 "pdflatex"
+  "Parcela-Whitepaper.tex" 1768135065.3937 8113 de504b1206cf23ec40d7e81474684a52 ""
   (generated)
   "Parcela-Whitepaper.aux"
   "Parcela-Whitepaper.log"
