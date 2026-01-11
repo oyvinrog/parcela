@@ -41,7 +41,7 @@
     "description": "Split-key encryption vault with 2-of-3 secret sharing. AES-256-GCM encryption that requires both your password and physical shares to decrypt.",
     "url": "https://oyvinrog.github.io/parcela/",
     "downloadUrl": "https://github.com/oyvinrog/parcela/releases/latest",
-    "softwareVersion": "0.1.6",
+    "softwareVersion": "0.1.8",
     "author": {
       "@type": "Organization",
       "name": "Parcela Contributors",
@@ -57,6 +57,8 @@
     "featureList": [
       "2-of-3 Secret Sharing",
       "AES-256-GCM Encryption",
+      "Steganography - Hide Shares in Images",
+      "Security Verification & Attack Simulation",
       "Virtual RAM-backed Drive",
       "Cross-Platform Support",
       "Command Line Interface",
@@ -480,6 +482,171 @@
       color: var(--text-secondary);
     }
 
+    /* Step images */
+    .step-card img {
+      width: 100%;
+      border-radius: 8px;
+      margin-top: 16px;
+      border: 1px solid var(--border-color);
+    }
+
+    /* Deep Dive Sections */
+    .deep-dive {
+      padding: 120px 0;
+      background: var(--bg-secondary);
+    }
+
+    .deep-dive-content {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 48px;
+      align-items: center;
+    }
+
+    @media (max-width: 900px) {
+      .deep-dive-content {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .deep-dive-text h3 {
+      font-size: 1.75rem;
+      margin-bottom: 16px;
+    }
+
+    .deep-dive-text p {
+      color: var(--text-secondary);
+      font-size: 1.05rem;
+      margin-bottom: 16px;
+    }
+
+    .deep-dive-images {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .deep-dive-images img {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border-color);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+      transition: transform 0.3s;
+    }
+
+    .deep-dive-images img:hover {
+      transform: scale(1.02);
+    }
+
+    .image-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 600px) {
+      .image-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .screenshot-sequence {
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .screenshot-item {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 20px;
+      align-items: start;
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      padding: 24px;
+      transition: all 0.3s;
+    }
+
+    .screenshot-item:hover {
+      border-color: var(--accent-blue);
+    }
+
+    .screenshot-item img {
+      width: 280px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+
+    @media (max-width: 700px) {
+      .screenshot-item {
+        grid-template-columns: 1fr;
+      }
+      .screenshot-item img {
+        width: 100%;
+      }
+    }
+
+    .screenshot-item .description {
+      padding-top: 8px;
+    }
+
+    .screenshot-item h4 {
+      font-size: 1.1rem;
+      margin-bottom: 8px;
+      color: var(--text-primary);
+    }
+
+    .screenshot-item p {
+      font-size: 0.95rem;
+      color: var(--text-secondary);
+    }
+
+    .stego-demo {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      margin-top: 32px;
+    }
+
+    @media (max-width: 700px) {
+      .stego-demo {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .stego-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      overflow: hidden;
+      transition: all 0.3s;
+    }
+
+    .stego-card:hover {
+      border-color: var(--accent-cyan);
+      transform: translateY(-4px);
+    }
+
+    .stego-card img {
+      width: 100%;
+      display: block;
+    }
+
+    .stego-card-content {
+      padding: 20px;
+    }
+
+    .stego-card h4 {
+      font-size: 1rem;
+      margin-bottom: 8px;
+    }
+
+    .stego-card p {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+
     /* Features Section */
     .features {
       padding: 120px 0;
@@ -729,6 +896,7 @@
       </a>
       <div class="nav-links">
         <a href="#security">Security</a>
+        <a href="#steganography">Steganography</a>
         <a href="#features">Features</a>
         <a href="#cli">CLI</a>
         <a href="https://github.com/oyvinrog/parcela" class="btn btn-secondary" rel="noopener noreferrer" target="_blank">
@@ -837,7 +1005,7 @@
 
       <div class="section-header" style="margin-top: 80px;">
         <span class="section-label">How It Works</span>
-        <h2>Four simple steps to unbreakable security</h2>
+        <h2>Four simple steps to split-key security</h2>
       </div>
 
       <div class="how-it-works">
@@ -865,6 +1033,69 @@
     </div>
   </section>
 
+  <!-- Security Verification Deep Dive -->
+  <section class="deep-dive" id="security-verification">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">Automated Security Testing</span>
+        <h2>Verify your vault against known attacks</h2>
+        <p>Parcela runs real attack simulations on your vault — testing for single-share recovery, tampering detection, nonce reuse vulnerabilities, and more.</p>
+      </div>
+
+      <div class="screenshot-sequence">
+        <div class="screenshot-item">
+          <img src="assets/demo_security_verification_1.png" alt="Security verification starting attack simulations" loading="lazy">
+          <div class="description">
+            <h4>1. Attack Simulation Suite</h4>
+            <p>Parcela attempts real attacks against your vault: trying to decrypt with a single share, testing if fake shares work, and verifying the 2-of-3 threshold property holds.</p>
+          </div>
+        </div>
+        <div class="screenshot-item">
+          <img src="assets/demo_security_verification_2.png" alt="Security verification testing tampering and authentication" loading="lazy">
+          <div class="description">
+            <h4>2. Tampering & Authentication Tests</h4>
+            <p>Bit-flip attacks on ciphertext, nonces, and authentication tags are simulated. Parcela verifies that AES-256-GCM correctly rejects any tampered data.</p>
+          </div>
+        </div>
+        <div class="screenshot-item">
+          <img src="assets/demo_security_verification_3.png" alt="Complete security verification report" loading="lazy">
+          <div class="description">
+            <h4>3. Full Security Report</h4>
+            <p>Get results from all tests: nonce uniqueness, chi-square randomness analysis, share integrity checks, and threshold recovery verification. Know your vault is cryptographically sound.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Steganography Section -->
+  <section class="features" id="steganography">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-label">Advanced Feature</span>
+        <h2>Hide shares in plain sight with steganography</h2>
+        <p>Store your encrypted shares inside ordinary-looking images. Even if someone finds the file, they won't know it contains encrypted data.</p>
+      </div>
+
+      <div class="stego-demo">
+        <div class="stego-card">
+          <img src="assets/demo_shares stored with steganography.png" alt="Shares hidden in steganography images" loading="lazy">
+          <div class="stego-card-content">
+            <h4>🖼️ Shares Embedded in Images</h4>
+            <p>Your encrypted shares are embedded into PNG images using custom ancillary chunks. The images display normally in any viewer, hiding the secret payload in metadata.</p>
+          </div>
+        </div>
+        <div class="stego-card">
+          <img src="assets/demo_shares stored with steganography2.png" alt="Steganography storage interface" loading="lazy">
+          <div class="stego-card-content">
+            <h4>🔍 Hidden in Plain Sight</h4>
+            <p>Share data is stored in a custom PNG chunk that image viewers ignore. The image displays normally, but avoid re-saving or uploading to services that re-encode images.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Features Section -->
   <section class="features" id="features">
     <div class="container">
@@ -882,12 +1113,12 @@
         <div class="feature-card">
           <div class="feature-icon">🛡️</div>
           <h3>AES-256-GCM</h3>
-          <p>Military-grade authenticated encryption. The same standard used by governments worldwide.</p>
+          <p>Authenticated encryption with a 256-bit key. Widely trusted and recommended by NIST.</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">💾</div>
           <h3>Virtual Drive</h3>
-          <p>RAM-backed encrypted filesystem. Work with sensitive files that never touch your disk.</p>
+          <p>RAM-backed encrypted filesystem. Decrypted files stay in memory, not on disk (disable swap for full protection).</p>
         </div>
         <div class="feature-card">
           <div class="feature-icon">🖥️</div>
@@ -900,11 +1131,20 @@
           <p>Full command-line interface for automation, scripting, and power users.</p>
         </div>
         <div class="feature-card">
+          <div class="feature-icon">🖼️</div>
+          <h3>Steganography</h3>
+          <p>Embed encrypted shares inside PNG images. Shares look like ordinary image files.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">✅</div>
+          <h3>Security Verification</h3>
+          <p>Run attack simulations on your vault to confirm cryptographic properties before trusting it.</p>
+        </div>
+        <div class="feature-card">
           <div class="feature-icon">🔓</div>
           <h3>Open Source</h3>
-          <p>Fully auditable code. Trust, but verify. Your security shouldn't rely on obscurity.</p>
+          <p>Fully auditable code. Trust, but verify. Your security should not rely on obscurity.</p>
         </div>
-      </div>
     </div>
   </section>
 
