@@ -1324,11 +1324,56 @@ input:focus {
   min-width: 0;
 }
 
+.security-test-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .security-test-title {
   font-weight: 600;
   font-size: 14px;
   margin-bottom: 4px;
   color: var(--ink);
+}
+
+.security-test-help {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--panel-border);
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.security-test-help:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 2px 8px rgba(228, 106, 46, 0.15);
+}
+
+.security-test-help-text {
+  font-size: 12px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(25, 25, 25, 0.04);
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+.security-test-help-text.hidden {
+  display: none;
 }
 
 .security-test-desc {

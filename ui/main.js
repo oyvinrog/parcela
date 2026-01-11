@@ -1815,48 +1815,56 @@ const SECURITY_TESTS = [
     id: "single_share_recovery",
     title: "Single Share Recovery Attack",
     desc: "Verifies that the secret CANNOT be recovered using only 1 of 3 shares (k-1 threshold attack).",
+    help: "We pretend someone only has 1 share of \"{driveName}\" and tries to open it. This should fail because you need 2 shares. If it didn't fail, your drive could be opened too easily.",
     run: "verify_single_share_unrecoverable",
   },
   {
     id: "bruteforce_timing",
     title: "Brute-Force Time Estimation",
     desc: "Measures Argon2id key derivation time and estimates cost to brute-force passwords.",
+    help: "We time how long your computer takes to turn your password into a key for \"{driveName}\". Longer time means attackers have to spend more time per guess. If it's too fast, weak passwords are easier to guess.",
     run: "verify_bruteforce_resistance",
   },
   {
     id: "share_integrity",
     title: "Share Integrity Verification",
     desc: "Verifies SHA-256 checksums on shares to detect corruption or tampering.",
+    help: "Each share has a tamper seal (a checksum). We check each share for \"{driveName}\" so a changed or corrupted share is detected before use.",
     run: "verify_share_integrity",
   },
   {
     id: "share_independence",
     title: "Share Statistical Independence",
     desc: "Verifies shares appear random and reveal no information about the secret (information-theoretic security).",
+    help: "We check that the shares for \"{driveName}\" look like random noise. If a share had patterns, it could leak hints about the drive without needing two shares.",
     run: "verify_share_independence",
   },
   {
     id: "aead_authentication",
     title: "AEAD Authentication Test",
     desc: "Verifies AES-256-GCM detects any bit-flip in ciphertext (chosen-ciphertext attack resistance).",
+    help: "We flip tiny bits in the encrypted data and make sure opening \"{driveName}\" fails. If it still opened, someone could alter data without you noticing.",
     run: "verify_aead_authentication",
   },
   {
     id: "nonce_uniqueness",
     title: "Nonce Uniqueness Verification",
     desc: "Verifies each encryption uses a unique random nonce (nonce-reuse attack prevention).",
+    help: "We make sure every encryption uses new random numbers. If \"{driveName}\" reused them, attackers could compare versions and learn about the contents.",
     run: "verify_nonce_uniqueness",
   },
   {
     id: "vault_header_sanity",
     title: "Vault Header Sanity Checks",
     desc: "Rejects legacy SHA-256 format and checks header for truncation or RNG failure (all-zero salt/nonce).",
+    help: "We check the file header for \"{driveName}\" to make sure it's the modern format, not truncated, and has proper random values. Bad headers can weaken security or corrupt data.",
     run: "verify_vault_header_sanity",
   },
   {
     id: "key_zeroization",
     title: "Key Memory Zeroization",
     desc: "Verifies encryption keys are securely zeroed from memory after use.",
+    help: "We verify the app clears secret keys from memory after use so someone grabbing memory can't recover the key for \"{driveName}\".",
     run: "verify_key_zeroization",
   },
 ];
@@ -1946,19 +1954,41 @@ function hideSecurityDialog() {
 
 function renderSecurityTests(defaultStatus) {
   securityTestsEl.innerHTML = "";
+  const selectedDrive =
+    state.selectedType === "drive"
+      ? (state.vault.virtual_drives || []).find((d) => d.id === state.selectedFileId)
+      : null;
+  const driveName = selectedDrive && selectedDrive.name ? selectedDrive.name : "this drive";
+
   for (const test of SECURITY_TESTS) {
     const el = document.createElement("div");
     el.className = `security-test ${defaultStatus}`;
     el.id = `test-${test.id}`;
+    const helpText = (test.help || "").replace("{driveName}", driveName);
     el.innerHTML = `
       <div class="security-test-indicator">
         ${defaultStatus === "pending" ? "○" : defaultStatus === "running" ? "◉" : ""}
       </div>
       <div class="security-test-content">
-        <div class="security-test-title">${test.title}</div>
+        <div class="security-test-header">
+          <div class="security-test-title">${test.title}</div>
+          <button class="security-test-help" type="button" aria-label="Explain ${test.title}" aria-expanded="false">i</button>
+        </div>
         <div class="security-test-desc">${test.desc}</div>
+        <div class="security-test-help-text hidden"></div>
       </div>
     `;
+    const helpTextEl = el.querySelector(".security-test-help-text");
+    if (helpTextEl) {
+      helpTextEl.textContent = helpText;
+    }
+    const helpBtn = el.querySelector(".security-test-help");
+    if (helpBtn && helpTextEl) {
+      helpBtn.addEventListener("click", () => {
+        const isHidden = helpTextEl.classList.toggle("hidden");
+        helpBtn.setAttribute("aria-expanded", isHidden ? "false" : "true");
+      });
+    }
     securityTestsEl.appendChild(el);
   }
 }
