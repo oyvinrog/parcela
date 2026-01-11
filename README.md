@@ -5,7 +5,7 @@
 <h1 align="center">Parcela</h1>
 
 <p align="center">
-  <strong>Split-key encryption vault for maximum security</strong><br>
+  <strong>Split-key encryption vault</strong><br>
   Your files require <em>both</em> your password <em>and</em> physical possession of shares to decrypt.
 </p>
 
@@ -75,19 +75,19 @@ cargo tauri dev
 | Feature | Description |
 |---------|-------------|
 | 🔐 **2-of-3 Secret Sharing** | Split files into 3 shares — any 2 can recover the original |
-| 🛡️ **AES-256-GCM Encryption** | Military-grade authenticated encryption |
-| �️ **Steganographic Image Shares** | Shares are hidden inside innocent-looking PNG images |
+| 🛡️ **AES-256-GCM + Argon2** | Authenticated encryption with memory-hard key derivation |
+| 🖼️ **Steganographic Image Shares** | Shares embedded in PNG images via custom chunks |
 | 💾 **Virtual Drive** | RAM-backed encrypted filesystem — browse in your file manager |
 | 🖥️ **Cross-Platform GUI** | Native desktop app for Windows, macOS, and Linux |
 | ⌨️ **CLI Support** | Full command-line interface for automation |
 
 ### Steganographic Image Shares
 
-By default, Parcela embeds share data inside PNG images, making them look like ordinary picture files:
+By default, Parcela embeds share data inside PNG images using custom PNG chunks:
 
 - **20 different icon designs** — Smiley, sun, star, heart, moon, cloud, and more
 - **Valid PNG files** — Open normally in any image viewer
-- **Plausible deniability** — Shares don't look like encrypted data
+- **Casual concealment** — Shares look like ordinary image files (note: re-saving or uploading to image services may strip the data)
 - **Backward compatible** — Still reads legacy binary share formats
 
 <p align="center">
