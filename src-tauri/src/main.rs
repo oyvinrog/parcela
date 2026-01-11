@@ -1092,79 +1092,15 @@ fn verify_single_share_unrecoverable(share_paths: &[String], password: &str) -> 
 
 /// Test 2: Measure Argon2id key derivation time and estimate brute-force cost
 fn verify_bruteforce_resistance(vault_path: &str, password: &str) -> Result<SecurityTestResult, String> {
-    use std::time::Instant;
-
-    // Read vault to get the salt
+    // Read vault data
     let vault_data = std::fs::read(vault_path).map_err(|e| e.to_string())?;
     
-    if vault_data.len() < 8 + 32 {
-        return Ok(SecurityTestResult {
-            passed: false,
-            message: "Vault file too small to contain proper encryption header.".to_string(),
-        });
-    }
-
-    // Verify it uses Argon2id (PARCELA2 format)
-    let magic = &vault_data[..8];
-    if magic != parcela::MAGIC_BLOB {
-        return Ok(SecurityTestResult {
-            passed: false,
-            message: "Vault uses legacy SHA-256 key derivation (PARCELA1). \
-                     Recommend re-encrypting with current format for Argon2id protection.".to_string(),
-        });
-    }
-
-    // Measure key derivation time
-    let start = Instant::now();
-    let _ = parcela::decrypt(&vault_data, password);
-    let elapsed = start.elapsed();
-    let ms = elapsed.as_millis() as f64;
-
-    // Calculate brute-force estimates
-    // Assuming attacker has 1000 GPUs, each doing 10 attempts/sec (Argon2id is memory-hard)
-    let attempts_per_sec_per_gpu = 10.0;
-    let num_gpus = 1000.0;
-    let total_attempts_per_sec = attempts_per_sec_per_gpu * num_gpus;
-
-    // Common password space sizes (use f64 to avoid overflow for large spaces)
-    let password_spaces: [(&str, f64); 5] = [
-        ("4-digit PIN", 10_000.0),
-        ("6-char lowercase", 26.0_f64.powf(6.0)),
-        ("8-char mixed case", 52.0_f64.powf(8.0)),
-        ("8-char alphanumeric", 62.0_f64.powf(8.0)),
-        ("12-char alphanumeric", 62.0_f64.powf(12.0)),
-    ];
-
-    let mut estimates = Vec::new();
-    for (name, space) in password_spaces.iter() {
-        let seconds = *space / total_attempts_per_sec;
-        let time_str = if seconds < 60.0 {
-            format!("{:.1} seconds", seconds)
-        } else if seconds < 3600.0 {
-            format!("{:.1} minutes", seconds / 60.0)
-        } else if seconds < 86400.0 {
-            format!("{:.1} hours", seconds / 3600.0)
-        } else if seconds < 31536000.0 {
-            format!("{:.1} days", seconds / 86400.0)
-        } else if seconds < 31536000.0 * 1000.0 {
-            format!("{:.1} years", seconds / 31536000.0)
-        } else {
-            format!("{:.2e} years", seconds / 31536000.0)
-        };
-        estimates.push(format!("{}: {}", name, time_str));
-    }
-
-    // Pass if key derivation takes at least 500ms
-    let passed = ms >= 500.0;
-
+    // Call the library function
+    let result = parcela::security_verification::verify_bruteforce_resistance(&vault_data, password);
+    
     Ok(SecurityTestResult {
-        passed,
-        message: format!(
-            "Key derivation: {:.0}ms (Argon2id, 64MiB memory)\n\
-             Estimated brute-force time (1000 GPUs):\n  • {}",
-            ms,
-            estimates.join("\n  • ")
-        ),
+        passed: result.passed,
+        message: result.message,
     })
 }
 
