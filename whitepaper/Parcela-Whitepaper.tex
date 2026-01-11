@@ -43,7 +43,7 @@ Parcela operates in four stages: (a) encrypt the file using AES-256-GCM with a k
 \end{figure}
 
 \section{Cryptographic Construction}
-Key derivation uses Argon2id with a random 32-byte salt, 64 MiB memory, 3 iterations, and 4 lanes, targeting approximately 2 seconds on modern hardware (Argon2 Team, 2015). The resulting 32-byte key is used with AES-256-GCM to encrypt the plaintext (Dworkin, 2007). The output is an authenticated ciphertext and nonce. The cryptography is standard and deliberate: Parcela depends more on composition and distribution than on novel primitives.
+Key derivation uses Argon2id with a random 32-byte salt, 64 MiB memory, 3 iterations, and 4 lanes, targeting approximately 2 seconds on modern hardware (Biryukov et al., 2016). The resulting 32-byte key is used with AES-256-GCM to encrypt the plaintext (Dworkin, 2007). The output is an authenticated ciphertext and nonce. The cryptography is standard and deliberate: Parcela depends more on composition and distribution than on novel primitives.
 
 The encrypted blob format (v2) is:
 \begin{quote}
@@ -97,10 +97,10 @@ Parcela does not protect against an adversary who obtains the password and two s
 Parcela combines password-based encryption with threshold secret sharing to remove single points of failure. By requiring both a password and a quorum of shares, it offers a practical approach to long-term secure storage that is robust under partial compromise rather than perfect under ideal conditions.
 
 \begin{thebibliography}{}
-\bibitem{argon2} Argon2 Team. (2015). \textit{Argon2: The memory-hard function for password hashing and other applications}. \url{https://argon2.online/argon2-specs.pdf}
-\bibitem{dworkin2007} Dworkin, M. (2007). \textit{Recommendation for block cipher modes of operation: Galois/Counter mode (GCM) and GMAC} (NIST Special Publication 800-38D). National Institute of Standards and Technology.
-\bibitem{shamir1979} Shamir, A. (1979). How to share a secret. \textit{Communications of the ACM, 22}(11), 612-613.
-\bibitem{parcela} Parcela project documentation and source code.
+\bibitem{argon2} Biryukov, A., Dinu, D., \& Khovratovich, D. (2016). \textit{Argon2: The memory-hard function for password hashing and other applications}. In \textit{2016 IEEE European Symposium on Security and Privacy (EuroS\&P)} (pp. 292-302). \url{https://doi.org/10.1109/EuroSP.2016.31}
+\bibitem{dworkin2007} Dworkin, M. (2007). \textit{Recommendation for block cipher modes of operation: Galois/Counter mode (GCM) and GMAC} (NIST Special Publication 800-38D). National Institute of Standards and Technology. \url{https://doi.org/10.6028/NIST.SP.800-38D}
+\bibitem{shamir1979} Shamir, A. (1979). How to share a secret. \textit{Communications of the ACM, 22}(11), 612-613. \url{https://doi.org/10.1145/359168.359176}
+\bibitem{parcela} oyvinrog. (n.d.). \textit{Parcela} [Source code]. GitHub. \url{https://github.com/oyvinrog/parcela}
 \end{thebibliography}
 
 \end{document}

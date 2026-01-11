@@ -78,9 +78,20 @@ Thumbs.db
 *.log
 debug.log*
 
+# Whitepaper build artifacts
+/whitepaper/*.aux
+/whitepaper/*.fdb_latexmk
+/whitepaper/*.fff
+/whitepaper/*.fls
+/whitepaper/*.log
+/whitepaper/*.out
+
+# Keep only the published whitepaper PDF in docs/
+/docs/Parcela-Whitepaper.*
+!/docs/Parcela-Whitepaper.pdf
+
 # Binaries
 *.exe
 *.dll
 *.so
 *.dylib
-
