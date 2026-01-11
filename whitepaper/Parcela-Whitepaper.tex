@@ -43,7 +43,7 @@ Parcela operates in four stages: (a) encrypt the file using AES-256-GCM with a k
 \end{figure}
 
 \section{Cryptographic Construction}
-Key derivation uses Argon2id with a random 32-byte salt, 64 MiB memory, 3 iterations, and 4 lanes, targeting approximately 2 seconds on modern hardware (Biryukov et al., 2016). The resulting 32-byte key is used with AES-256-GCM to encrypt the plaintext (Dworkin, 2007). The output is an authenticated ciphertext and nonce. The cryptography is standard and deliberate: Parcela depends more on composition and distribution than on novel primitives.
+Key derivation uses Argon2id with a random 32-byte salt, 64 MiB memory, 3 iterations, and 4 lanes, requiring approximately 150 milliseconds on modern hardware (Biryukov et al., 2016). The resulting 32-byte key is used with AES-256-GCM to encrypt the plaintext (Dworkin, 2007). The output is an authenticated ciphertext and nonce. The cryptography is standard and deliberate: Parcela depends more on composition and distribution than on novel primitives.
 
 The encrypted blob format (v2) is:
 \begin{quote}
@@ -56,15 +56,18 @@ PARCELA2 (8 bytes magic)\\
 \section{Secret Sharing}
 The encrypted blob is split with a 2-of-3 threshold scheme. Any two shares can reconstruct the original blob; one share alone reveals no information (Shamir, 1979). Shares are stored as either binary files or embedded within PNG images. This is a simple application of a well-known method, chosen for its robustness under partial compromise.
 
-The share file format is:
+The share file format (v2) is:
 \begin{quote}
-PSHARE01 (8 bytes magic)\\
+PSHARE02 (8 bytes magic)\\
 \textless index\textgreater\ (1 byte: 1, 2, or 3)\\
 \textless total\textgreater\ (1 byte: 3)\\
 \textless threshold\textgreater\ (1 byte: 2)\\
 \textless length\textgreater\ (4 bytes, big-endian)\\
-\textless payload\textgreater
+\textless payload\textgreater\\
+\textless SHA-256 checksum\textgreater\ (32 bytes)
 \end{quote}
+
+The checksum covers the index and payload bytes, enabling detection of share corruption before reconstruction.
 
 \section{Steganographic Image Shares}
 To improve concealment during storage and transport, Parcela embeds share data in custom PNG chunks. The images remain valid PNG files and can be opened by standard image viewers. The data survives normal file copying but is lost if the image is re-encoded by social platforms or editors. Example steganographic shares are shown in Figure~\ref{fig:stego}.
