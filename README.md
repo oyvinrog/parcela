@@ -87,8 +87,10 @@ By default, Parcela embeds share data inside PNG images using custom PNG chunks:
 
 - **20 different icon designs** — Smiley, sun, star, heart, moon, cloud, and more
 - **Valid PNG files** — Open normally in any image viewer
-- **Casual concealment** — Shares look like ordinary image files (note: re-saving or uploading to image services may strip the data)
+- **Casual concealment** — Shares look like ordinary image files
 - **Backward compatible** — Still reads legacy binary share formats
+
+> ⚠️ **Important:** Do not re-save, edit, or upload image shares to services that re-encode images (e.g., social media, image hosting). This will strip the embedded share data and make the shares unrecoverable.
 
 <p align="center">
   <img src="docs/assets/stego-example.png" alt="Steganographic Shares" width="400">

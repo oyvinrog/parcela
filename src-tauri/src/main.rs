@@ -887,8 +887,10 @@ fn is_safe_path(path: &str) -> bool {
 
 /// Delete multiple files from the filesystem.
 /// Only allows deletion of files that contain valid Parcela share data for security.
+/// Set `force` to true to skip validation (for corrupted shares).
 #[tauri::command]
-fn delete_files(paths: Vec<String>) -> Result<(), String> {
+fn delete_files(paths: Vec<String>, force: Option<bool>) -> Result<(), String> {
+    let force = force.unwrap_or(false);
     for path_str in paths {
         if path_str.is_empty() {
             continue;
@@ -920,14 +922,17 @@ fn delete_files(paths: Vec<String>) -> Result<(), String> {
         }
 
         // Security: verify the file contains a valid Parcela share before allowing deletion
-        let data = std::fs::read(path)
-            .map_err(|e| format!("Failed to read file for verification: {}: {}", path.display(), e))?;
-        
-        if parcela::decode_share_universal(&data).is_err() {
-            return Err(format!(
-                "Refusing to delete '{}': file does not contain valid Parcela share data.",
-                path.display()
-            ));
+        // Skip validation if force=true (for corrupted shares)
+        if !force {
+            let data = std::fs::read(path)
+                .map_err(|e| format!("Failed to read file for verification: {}: {}", path.display(), e))?;
+            
+            if parcela::decode_share_universal(&data).is_err() {
+                return Err(format!(
+                    "Refusing to delete '{}': file does not contain valid Parcela share data. Use force-delete if the file is corrupted.",
+                    path.display()
+                ));
+            }
         }
 
         std::fs::remove_file(path)

@@ -1305,7 +1305,21 @@ async function handleDeleteEntry(entryId, entryType) {
     // Delete share files if requested
     if (deleteFiles && availableShares.length > 0) {
       setStatus("Deleting share files...");
-      await invoke("delete_files", { paths: availableShares });
+      try {
+        await invoke("delete_files", { paths: availableShares, force: false });
+      } catch (deleteErr) {
+        // If normal deletion fails (e.g., corrupted share), offer force-delete
+        const forceDelete = confirm(
+          `Failed to delete share files: ${deleteErr}\n\n` +
+          `This may indicate corrupted share files.\n` +
+          `Force delete anyway? (This will skip validation)`
+        );
+        if (forceDelete) {
+          await invoke("delete_files", { paths: availableShares, force: true });
+        } else {
+          throw new Error("Deletion cancelled by user");
+        }
+      }
     }
 
     // Remove from vault state

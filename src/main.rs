@@ -24,7 +24,7 @@ enum Command {
         #[arg(long)]
         password: String,
         /// Generate shares as PNG images with embedded steganographic data
-        #[arg(long, default_value = "true")]
+        #[arg(long, default_value_t = true)]
         image: bool,
         /// Use legacy binary format instead of image format
         #[arg(long)]
